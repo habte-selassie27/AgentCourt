@@ -4,10 +4,13 @@ import path from 'path';
 
 export default defineConfig({
   root: 'frontend',
+  // .env files live at the repo root, not in frontend/. Note: __dirname here is
+  // the config file's directory (frontend/), so we go one level up.
+  envDir: path.resolve(__dirname, '..'),
   plugins: [react()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './frontend/src'),
+      '@': path.resolve(__dirname, 'src'),
     },
   },
   server: {
@@ -18,5 +21,9 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
   },
 });
