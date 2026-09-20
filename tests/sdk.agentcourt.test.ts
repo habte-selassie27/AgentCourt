@@ -216,6 +216,8 @@ describe.skipIf(!live)('AgentCourt SDK against a live deployment', () => {
 describe.skipIf(live)('AgentCourt SDK without a deployment', () => {
   it('surfaces a clear error rather than phantom data', async () => {
     const court = makeCourt();
-    await expect(court.getDispute(1n)).rejects.toThrow(/No contract deployed at/);
+    // Empty registry address => the gen_call read cannot reach a contract and
+    // must throw, never silently resolve with fabricated data.
+    await expect(court.getDispute(1n)).rejects.toThrow();
   });
 });

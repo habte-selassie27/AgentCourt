@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getCourt } from '../sdk';
 import type { DisputeRecord } from '../sdk';
+import { describeError } from '../sdk/errors';
 import { formatStake, formatDateTime, shortAddress, getStatusClass, disputeIdLabel, isActive, isResolved } from '../dispute';
 
 interface DisputeDashboardProps {
@@ -30,6 +31,7 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
   const [disputes, setDisputes] = useState<DisputeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const friendly = describeError(error);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -100,12 +102,33 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
       </div>
 
       {error && (
-        <div className="stat-card" style={{ marginBottom: '1.5rem' }}>
-          <h3>Unable to load disputes from chain</h3>
-          <div style={{ marginTop: '0.5rem', color: 'var(--danger)' }}>{error}</div>
-          <button className="btn btn-secondary" style={{ marginTop: '1rem' }} onClick={() => void load()}>
-            Retry
-          </button>
+        <div className="error-panel" role="alert">
+          <div className="error-panel-icon">⚠️</div>
+          <div className="error-panel-body">
+            <h3>{friendly.title}</h3>
+            <p>{friendly.hint}</p>
+            {friendly.detail && (
+              <details className="error-panel-details">
+                <summary>Technical details</summary>
+                <code>{friendly.detail}</code>
+              </details>
+            )}
+            <div className="error-panel-actions">
+              {friendly.retryable && (
+                <button className="btn btn-secondary" onClick={() => void load()} disabled={loading}>
+                  {loading ? 'Retrying…' : 'Try again'}
+                </button>
+              )}
+              <a
+                className="btn btn-secondary"
+                href="https://explorer-studio.genlayer.com"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Explorer
+              </a>
+            </div>
+          </div>
         </div>
       )}
 

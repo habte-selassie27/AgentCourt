@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { BrowserProvider, Contract, JsonRpcProvider, Signer } from 'ethers';
+import { ContractExecutionError, GenLayerClient } from './genlayer';
 
 // ---------------------------------------------------------------------------
 // ABIs — writes go through AgentCourtCore, reads go direct to DisputeRegistry
@@ -43,6 +44,8 @@ const RESOLUTION_MANAGER_ABI = [
 
 /** Verdict confidence is stored in basis points: 10000 === 100.00%. */
 export const CONFIDENCE_DENOMINATOR = 10000;
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 export interface ConsensusRecord {
   disputeId: bigint;
@@ -144,6 +147,67 @@ const EVIDENCE_TYPE_MAP: Record<string, number> = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyContract = Contract;
 
+// ---------------------------------------------------------------------------
+// Mappers — DisputeRegistry IC returns plain JSON objects with camelCase keys
+// ---------------------------------------------------------------------------
+
+function asBig(v: any): bigint {
+  return BigInt(v ?? 0);
+}
+
+function mapDispute(d: any): DisputeRecord {
+  return {
+    id: asBig(d?.id),
+    claimant: String(d?.claimant ?? ''),
+    respondent: String(d?.respondent ?? ''),
+    agreementHash: String(d?.agreementHash ?? ''),
+    claimType: claimTypeFromNum(Number(d?.claimType ?? 0)),
+    stake: asBig(d?.stake),
+    createdAt: asBig(d?.createdAt),
+    deadline: asBig(d?.deadline),
+    status: statusFromNum(Number(d?.status ?? 0)),
+    description: String(d?.description ?? ''),
+  };
+}
+
+function mapEvidence(e: any) {
+  return {
+    id: asBig(e?.id),
+    disputeId: asBig(e?.disputeId),
+    evidenceType: evidenceTypeFromNum(Number(e?.evidenceType ?? 0)),
+    source: String(e?.source ?? ''),
+    refUri: String(e?.refUri ?? ''),
+    contentHash: String(e?.contentHash ?? ''),
+    timestamp: asBig(e?.timestamp),
+    submitter: String(e?.submitter ?? ''),
+    description: String(e?.description ?? ''),
+  };
+}
+
+function mapVerdict(v: any): VerdictRecord {
+  return {
+    disputeId: asBig(v?.disputeId),
+    verdict: verdictFromNum(Number(v?.verdict ?? 0)),
+    confidence: asBig(v?.confidence),
+    reasoningHash: String(v?.reasoningHash ?? ''),
+    evidenceIds: ((v?.evidenceIds ?? []) as any[]).map((x) => asBig(x)),
+    resolution: settlementFromNum(Number(v?.resolution ?? 0)),
+    reviewRequired: Boolean(v?.reviewRequired),
+    finalizedAt: asBig(v?.finalizedAt),
+  };
+}
+
+function mapConsensus(r: any): ConsensusRecord {
+  return {
+    disputeId: asBig(r?.disputeId),
+    evaluator: String(r?.evaluator ?? ''),
+    verdict: verdictFromNum(Number(r?.verdict ?? 0)),
+    confidence: asBig(r?.confidence),
+    reasoningHash: String(r?.reasoningHash ?? ''),
+    timestamp: asBig(r?.timestamp),
+  };
+}
+
 // Helper to call a dynamic method on an ethers Contract
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callContractMethod(contract: Contract, method: string, ...args: any[]): Promise<any> {
@@ -153,6 +217,7 @@ async function callContractMethod(contract: Contract, method: string, ...args: a
 
 export class AgentCourt {
   readonly config: AgentCourtConfig;
+  private gl: GenLayerClient;
   private provider: JsonRpcProvider;
   private signer: Signer | null = null;
   // Write path: AgentCourtCore (mutations)
@@ -165,10 +230,13 @@ export class AgentCourt {
 
   constructor(config: AgentCourtConfig) {
     this.config = config;
+    this.gl = new GenLayerClient(config.rpcUrl);
     this.provider = new JsonRpcProvider(config.rpcUrl);
-    this.coreContract = new Contract(config.coreAddress, CORE_WRITE_ABI, this.provider) as AnyContract;
-    this.disputeRegistry = new Contract(config.disputeRegistryAddress, DISPUTE_REGISTRY_ABI, this.provider) as AnyContract;
-    this.resolutionManager = new Contract(config.resolutionManagerAddress, RESOLUTION_MANAGER_ABI, this.provider) as AnyContract;
+    // Reads go through gen_call (see readIc); the ethers contracts below are
+    // only used for the write path, so tolerate placeholder addresses here.
+    this.coreContract = new Contract(config.coreAddress || ZERO_ADDRESS, CORE_WRITE_ABI, this.provider) as AnyContract;
+    this.disputeRegistry = new Contract(config.disputeRegistryAddress || ZERO_ADDRESS, DISPUTE_REGISTRY_ABI, this.provider) as AnyContract;
+    this.resolutionManager = new Contract(config.resolutionManagerAddress || ZERO_ADDRESS, RESOLUTION_MANAGER_ABI, this.provider) as AnyContract;
   }
 
   async connectWallet(ethereum: any): Promise<string> {
@@ -234,18 +302,26 @@ export class AgentCourt {
     return this.getDisputeCount();
   }
 
+  /**
+   * Read a view method from the DisputeRegistry IC via gen_call.
+   * The registry is a GenLayer Python contract — ethers/eth_call returns
+   * placeholder data for it, so ALL reads must go through the JSON-RPC.
+   */
+  private async readIc<T>(method: string, args: unknown[]): Promise<T> {
+    const res = await this.gl.genCallRaw<T>(this.config.disputeRegistryAddress, method, args);
+    if (!res.ok || res.data === undefined) {
+      if (res.error?.kind === 'execution') {
+        throw new ContractExecutionError(method, res.error.executionResult ?? res.error.message);
+      }
+      throw new Error(res.error?.message ?? `Read "${method}" failed.`);
+    }
+    return res.data;
+  }
+
   private async ensureDeployed(): Promise<void> {
     if (this.deployedChecked) return;
-    // GenLayer ICs are Python-based, not EVM bytecode — getCode() returns '0x'.
-    // Instead, try a simple read call to verify the contract is responsive.
-    try {
-      await callContractMethod(this.disputeRegistry, 'getDisputeCount');
-    } catch {
-      throw new Error(
-        `DisputeRegistry at ${this.config.disputeRegistryAddress} is not responding. ` +
-          'Deploy the DisputeRegistry and set VITE_DISPUTE_REGISTRY.',
-      );
-    }
+    // GenLayer ICs are Python-based — a cheap read verifies the contract responds.
+    await this.readIc<number>('get_dispute_count', []);
     this.deployedChecked = true;
   }
 
@@ -255,75 +331,40 @@ export class AgentCourt {
 
   async getDispute(disputeId: bigint): Promise<DisputeRecord> {
     await this.ensureDeployed();
-    let d: any;
-    try {
-      d = await callContractMethod(this.disputeRegistry, 'getDispute', disputeId);
-    } catch {
+    const d = await this.readIc<any>('get_dispute', [Number(disputeId)]);
+    if (d === null || d === undefined) {
       throw new Error(`Dispute #${disputeId} does not exist on this chain.`);
     }
-    return {
-      id: BigInt(d.id),
-      claimant: d.claimant as string,
-      respondent: d.respondent as string,
-      agreementHash: d.agreementHash as string,
-      claimType: claimTypeFromNum(Number(d.claimType)),
-      stake: BigInt(d.stake),
-      createdAt: BigInt(d.createdAt),
-      deadline: BigInt(d.deadline),
-      status: statusFromNum(Number(d.status)),
-      description: d.description as string,
-    };
+    return mapDispute(d);
   }
 
   async getEvidence(evidenceId: bigint) {
-    const e = await callContractMethod(this.disputeRegistry, 'getEvidence', evidenceId);
-    return {
-      id: BigInt(e.id),
-      disputeId: BigInt(e.disputeId),
-      evidenceType: evidenceTypeFromNum(Number(e.evidenceType)),
-      source: e.source as string,
-      refUri: e.refUri as string,
-      contentHash: e.contentHash as string,
-      timestamp: BigInt(e.timestamp),
-      submitter: e.submitter as string,
-      description: e.description as string,
-    };
+    const e = await this.readIc<any>('get_evidence', [Number(evidenceId)]);
+    return mapEvidence(e);
   }
 
   async hasVerdict(disputeId: bigint): Promise<boolean> {
     await this.ensureDeployed();
-    return Boolean(await callContractMethod(this.disputeRegistry, 'hasVerdict', disputeId));
+    return Boolean(await this.readIc<unknown>('has_verdict', [Number(disputeId)]));
   }
 
   async getVerdict(disputeId: bigint): Promise<VerdictRecord | null> {
     if (!(await this.hasVerdict(disputeId))) return null;
 
-    const v = await callContractMethod(this.disputeRegistry, 'getVerdict', disputeId);
-    return {
-      disputeId: BigInt(v.disputeId),
-      verdict: verdictFromNum(Number(v.verdict)),
-      confidence: BigInt(v.confidence),
-      reasoningHash: v.reasoningHash as string,
-      evidenceIds: (v.evidenceIds as bigint[]).map((id) => BigInt(id)),
-      resolution: settlementFromNum(Number(v.resolution)),
-      reviewRequired: v.reviewRequired as boolean,
-      finalizedAt: BigInt(v.finalizedAt),
-    };
+    const v = await this.readIc<any>('get_verdict', [Number(disputeId)]);
+    if (!v) return null;
+    return mapVerdict(v);
   }
 
   async getDisputeEvidenceIds(disputeId: bigint): Promise<bigint[]> {
     await this.ensureDeployed();
-    try {
-      const ids = await callContractMethod(this.disputeRegistry, 'getDisputeEvidenceIds', disputeId);
-      return (ids as bigint[]).map((id) => BigInt(id));
-    } catch {
-      throw new Error(`Dispute #${disputeId} does not exist on this chain.`);
-    }
+    const ids = await this.readIc<any[]>('get_dispute_evidence_ids', [Number(disputeId)]);
+    return (ids ?? []).map((id) => asBig(id));
   }
 
   async isEvidenceVerified(evidenceId: bigint): Promise<boolean> {
     try {
-      return Boolean(await callContractMethod(this.disputeRegistry, 'isVerified', evidenceId));
+      return Boolean(await this.readIc<unknown>('is_verified', [Number(evidenceId)]));
     } catch {
       return false;
     }
@@ -331,20 +372,14 @@ export class AgentCourt {
 
   async getConsensusRecords(disputeId: bigint): Promise<ConsensusRecord[]> {
     await this.ensureDeployed();
-    const records = await callContractMethod(this.disputeRegistry, 'getConsensusRecords', disputeId);
-    return (records as any[]).map((r) => ({
-      disputeId: BigInt(r.disputeId),
-      evaluator: r.evaluator as string,
-      verdict: verdictFromNum(Number(r.verdict)),
-      confidence: BigInt(r.confidence),
-      reasoningHash: r.reasoningHash as string,
-      timestamp: BigInt(r.timestamp),
-    }));
+    const records = await this.readIc<any[]>('get_consensus_records', [Number(disputeId)]);
+    return (records ?? []).map(mapConsensus);
   }
 
   async getConsensusCount(disputeId: bigint): Promise<bigint> {
     await this.ensureDeployed();
-    return BigInt(await callContractMethod(this.disputeRegistry, 'getConsensusCount', disputeId));
+    const count = await this.readIc<number>('get_consensus_count', [Number(disputeId)]);
+    return BigInt(count ?? 0);
   }
 
   async loadDisputeDetail(disputeId: bigint): Promise<DisputeDetailData> {
@@ -370,8 +405,8 @@ export class AgentCourt {
 
   async getDisputeCount(): Promise<bigint> {
     await this.ensureDeployed();
-    const count = await callContractMethod(this.disputeRegistry, 'getDisputeCount');
-    return BigInt(count);
+    const count = await this.readIc<number>('get_dispute_count', []);
+    return BigInt(count ?? 0);
   }
 
   async listDisputes(): Promise<DisputeRecord[]> {
@@ -379,7 +414,11 @@ export class AgentCourt {
     if (count <= 0) return [];
 
     const ids = Array.from({ length: count }, (_, i) => BigInt(i + 1));
-    return Promise.all(ids.map((id) => this.getDispute(id)));
+    // Drop individual failures so one bad record doesn't blank the whole list.
+    const results = await Promise.allSettled(ids.map((id) => this.getDispute(id)));
+    return results
+      .filter((r): r is PromiseFulfilledResult<DisputeRecord> => r.status === 'fulfilled')
+      .map((r) => r.value);
   }
 
   async submitEvidence(params: {
@@ -488,24 +527,7 @@ export class AgentCourt {
   // ---------------------------------------------------------------------------
 
   private async icCall(method: string, address: string, args: any[]): Promise<any> {
-    const body = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'gen_call',
-      params: {
-        to: address,
-        data: JSON.stringify({ method, args }),
-        transaction_hash_variant: 'latest-nonfinal',
-      },
-    };
-    const res = await fetch(this.config.rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
-    return json.result;
+    return this.gl.genCall(address, method, args);
   }
 
   async judgeDispute(agreement: object, claim: object, evidence: object[]) {
