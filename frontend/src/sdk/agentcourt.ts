@@ -174,9 +174,11 @@ export class AgentCourt {
   async connectWallet(ethereum: any): Promise<string> {
     const browserProvider = new BrowserProvider(ethereum);
     this.signer = await browserProvider.getSigner();
+    // Only the write path (AgentCourtCore) is rewired to the wallet's signer.
+    // Read contracts stay on the JsonRpcProvider so the dashboard keeps reading
+    // GenLayer state even when the connected wallet is on a different network
+    // (otherwise reads return empty data and fail ABI decoding with BAD_DATA).
     this.coreContract = new Contract(this.config.coreAddress, CORE_WRITE_ABI, this.signer) as AnyContract;
-    this.disputeRegistry = new Contract(this.config.disputeRegistryAddress, DISPUTE_REGISTRY_ABI, this.signer) as AnyContract;
-    this.resolutionManager = new Contract(this.config.resolutionManagerAddress, RESOLUTION_MANAGER_ABI, this.signer) as AnyContract;
     return this.signer.getAddress();
   }
 
