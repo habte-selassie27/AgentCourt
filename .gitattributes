@@ -1,0 +1,30 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python
+*.py text diff=python
+*.pyi text
+
+# TypeScript
+*.ts text diff=typescript
+*.tsx text diff=typescript
+
+# Solidity
+*.sol text diff=solidity
+
+# JSON
+*.json text
+
+# Markdown
+*.md text diff=markdown
+
+# YAML
+*.yml text
+*.yaml text
+
+# Shell scripts
+*.sh text eol=lf
+
+# Windows scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
