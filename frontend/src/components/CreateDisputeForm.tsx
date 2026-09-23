@@ -1,10 +1,62 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { getCourt } from '../sdk';
 import { parseEther, isHexString, ZeroHash } from 'ethers';
 
 interface CreateDisputeFormProps {
   onCreated: (id: bigint) => void;
   onCancel: () => void;
+}
+
+const DRAFT_KEY = 'agentcourt.createDispute.draft.v1';
+
+interface CreateDisputeDraft {
+  respondent: string;
+  agreementHash: string;
+  claimType: string;
+  description: string;
+  stake: string;
+  deadline: string;
+  evidence: EvidenceDraft[];
+}
+
+function loadDraft(): Partial<CreateDisputeDraft> | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as Partial<CreateDisputeDraft>;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(draft: CreateDisputeDraft): void {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // storage full / private mode — draft is best-effort
+  }
+}
+
+function clearDraft(): void {
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function draftHasContent(draft: Partial<CreateDisputeDraft> | null): boolean {
+  if (!draft) return false;
+  if (draft.respondent?.trim()) return true;
+  if (draft.agreementHash?.trim()) return true;
+  if (draft.description?.trim()) return true;
+  if (draft.stake?.trim()) return true;
+  if (Array.isArray(draft.evidence)) {
+    return draft.evidence.some((e) => e?.source?.trim() || e?.refUri?.trim() || e?.description?.trim() || e?.contentHash?.trim());
+  }
+  return false;
 }
 
 const EVIDENCE_TYPES = [
@@ -102,18 +154,31 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     return toDatetimeLocal(d.getTime());
   }, []);
 
-  const [respondent, setRespondent] = useState('');
-  const [agreementHash, setAgreementHash] = useState('');
-  const [claimType, setClaimType] = useState('DELIVERY_FAILURE');
-  const [description, setDescription] = useState('');
-  const [stake, setStake] = useState('');
-  const [deadline, setDeadline] = useState(defaultDeadline);
-  const [evidence, setEvidence] = useState<EvidenceDraft[]>([emptyEvidence()]);
+  const restoredDraft = useMemo(() => loadDraft(), []);
+  const hadDraft = useRef(draftHasContent(restoredDraft));
+
+  const [respondent, setRespondent] = useState(restoredDraft?.respondent ?? '');
+  const [agreementHash, setAgreementHash] = useState(restoredDraft?.agreementHash ?? '');
+  const [claimType, setClaimType] = useState(restoredDraft?.claimType ?? 'DELIVERY_FAILURE');
+  const [description, setDescription] = useState(restoredDraft?.description ?? '');
+  const [stake, setStake] = useState(restoredDraft?.stake ?? '');
+  const [deadline, setDeadline] = useState(
+    restoredDraft?.deadline && !Number.isNaN(new Date(restoredDraft.deadline).getTime())
+      ? restoredDraft.deadline
+      : defaultDeadline,
+  );
+  const [evidence, setEvidence] = useState<EvidenceDraft[]>(
+    Array.isArray(restoredDraft?.evidence) && restoredDraft.evidence.length > 0
+      ? restoredDraft.evidence.map((item) => ({ ...emptyEvidence(), ...item }))
+      : [emptyEvidence()],
+  );
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [createdId, setCreatedId] = useState<bigint | null>(null);
+  const [navigating, setNavigating] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(hadDraft.current);
 
   const descriptionLength = description.length;
   const respondentValid = respondent.trim() === '' || isValidAddress(respondent);
@@ -122,13 +187,39 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     setEvidence((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
 
+  // Persist draft on every field change so a reload / failed submit keeps values.
+  useEffect(() => {
+    if (createdId !== null || navigating) return;
+    saveDraft({ respondent, agreementHash, claimType, description, stake, deadline, evidence });
+  }, [respondent, agreementHash, claimType, description, stake, deadline, evidence, createdId, navigating]);
+
+  function dismissDraftNotice() {
+    setDraftRestored(false);
+  }
+
+  function discardDraft() {
+    clearDraft();
+    setRespondent('');
+    setAgreementHash('');
+    setClaimType('DELIVERY_FAILURE');
+    setDescription('');
+    setStake('');
+    setDeadline(defaultDeadline);
+    setEvidence([emptyEvidence()]);
+    setDraftRestored(false);
+    setError('');
+    setSuccess('');
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting || createdId !== null) return;
     setError('');
     setSuccess('');
     setCreatedId(null);
     setSubmitting(true);
     setProgress('');
+    let didNavigate = false;
 
     try {
       const court = getCourt();
@@ -240,12 +331,22 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
 
       setCreatedId(disputeId);
       setSuccess(`Dispute #${disputeId} created successfully with all ${submitted} evidence items.`);
+      // Dispute exists on-chain — drop the draft so a later Create isn't prefilled with a duplicate.
+      clearDraft();
+      setDraftRestored(false);
+      // Leave the create form — don't leave the submit button looking clickable again.
+      didNavigate = true;
+      setNavigating(true);
+      onCreated(disputeId);
+      return;
     } catch (err: any) {
       console.error('Create dispute failed:', err);
+      // Keep the draft (effect already saved fields); surface the failure.
       setError(err.message || 'Transaction failed. Check console for details.');
     } finally {
       setSubmitting(false);
-      setProgress('');
+      // Keep progress visible if we are navigating away so the button doesn't flip to "Create Dispute".
+      if (!didNavigate) setProgress('');
     }
   };
 
@@ -271,12 +372,67 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
             File a structured claim. Evidence is submitted on-chain right after creation.
           </p>
         </div>
-        <button className="btn btn-secondary" onClick={onCancel}>
+        <button className="btn btn-secondary" onClick={() => {
+          // Navigating away keeps the draft in localStorage for next time.
+          onCancel();
+        }}>
           Cancel
         </button>
       </div>
 
       <div className="form-card">
+
+      {draftRestored && !navigating && createdId === null && (
+        <div
+          style={{
+            background: 'rgba(59,130,246,0.1)',
+            border: '1px solid rgba(59,130,246,0.3)',
+            borderRadius: '8px',
+            padding: '0.75rem 1rem',
+            marginBottom: '1rem',
+            color: '#93c5fd',
+            fontSize: '0.9rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <div style={{ flex: 1 }}>
+              Restored your previous draft so you can finish after a failed submit or reload.
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={dismissDraftNotice}
+                style={{
+                  background: 'none',
+                  border: '1px solid rgba(59,130,246,0.4)',
+                  borderRadius: '6px',
+                  color: '#93c5fd',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  padding: '0.25rem 0.6rem',
+                }}
+              >
+                Keep draft
+              </button>
+              <button
+                type="button"
+                onClick={discardDraft}
+                style={{
+                  background: 'none',
+                  border: '1px solid rgba(148,163,184,0.35)',
+                  borderRadius: '6px',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  padding: '0.25rem 0.6rem',
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div style={errorBannerStyle}>
@@ -326,7 +482,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         </div>
       )}
 
-      {createdId !== null && (
+      {createdId !== null && !navigating && (
         <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
           <button
             type="button"
@@ -583,7 +739,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={submitting}
+          disabled={submitting || createdId !== null || navigating}
           style={{
             width: '100%',
             padding: '0.75rem',
@@ -592,10 +748,10 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
             alignItems: 'center',
             justifyContent: 'center',
             gap: '0.5rem',
-            opacity: submitting ? 0.8 : 1,
+            opacity: submitting || createdId !== null || navigating ? 0.8 : 1,
           }}
         >
-          {submitting && (
+          {(submitting || navigating) && (
             <span
               style={{
                 display: 'inline-block',
@@ -608,7 +764,11 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
               }}
             />
           )}
-          {progress || (submitting ? 'Creating Dispute...' : 'Create Dispute')}
+          {navigating
+            ? 'Opening dispute...'
+            : createdId !== null
+              ? 'Dispute created'
+              : progress || (submitting ? 'Creating Dispute...' : 'Create Dispute')}
         </button>
       </form>
       </div>
