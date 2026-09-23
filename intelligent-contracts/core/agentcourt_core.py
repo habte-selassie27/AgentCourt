@@ -725,13 +725,22 @@ class AgentCourtCore(gl.Contract):
                     eid = "EVID-" + str(item.get("id", ""))
                     if ref.startswith("http://") or ref.startswith("https://"):
                         try:
-                            page = gl.nondet.web.render(ref, mode="text")
+                            # web.get + explicit decode is lighter and more stable
+                            # than web.render for API/JSON evidence URLs.
+                            resp = gl.nondet.web.get(ref)
+                            body = getattr(resp, "body", None)
+                            if body is None:
+                                text = str(resp)
+                            elif isinstance(body, (bytes, bytearray)):
+                                text = bytes(body).decode("utf-8", errors="replace")
+                            else:
+                                text = str(body)
                             fetches.append(
                                 {
                                     "id": eid,
                                     "url": ref,
                                     "status": "ok",
-                                    "excerpt": str(page)[:1500],
+                                    "excerpt": text[:1500],
                                 }
                             )
                         except Exception:

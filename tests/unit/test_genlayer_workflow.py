@@ -130,7 +130,15 @@ def stub_nondet(monkeypatch, evaluator_verdicts, adversarial=None):
     def fake_render(url, **kwargs):
         return "status page content"
 
+    class _Resp:
+        def __init__(self, text: str):
+            self.body = text.encode("utf-8")
+
+    def fake_get(url, **kwargs):
+        return _Resp("status page content")
+
     monkeypatch.setattr(core_mod.gl.nondet, "exec_prompt", fake_exec_prompt)
+    monkeypatch.setattr(core_mod.gl.nondet.web, "get", fake_get)
     monkeypatch.setattr(core_mod.gl.nondet.web, "render", fake_render)
 
 
@@ -218,7 +226,7 @@ class TestEvaluationPathExists:
         src = inspect.getsource(core_mod)
         assert "gl.vm.run_nondet_unsafe" in src
         assert "gl.nondet.exec_prompt" in src
-        assert "gl.nondet.web.render" in src
+        assert "gl.nondet.web.get" in src
 
     def test_no_deterministic_keyword_judge_path(self):
         # The fake deterministic judge modules must stay deleted.
