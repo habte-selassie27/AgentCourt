@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getCourt } from '../sdk';
 import type { DisputeDetailData } from '../sdk';
+import { describeError } from '../sdk/errors';
 import { EvaluatorResults } from './EvaluatorResults';
 import { ConsensusView } from './ConsensusView';
 import { EvidenceExplorer } from './EvidenceExplorer';
@@ -35,6 +36,8 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [actionWarning, setActionWarning] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -49,18 +52,40 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     }
   }, [disputeId]);
 
+  /** Soft-poll after a long-running write so the UI catches up without a manual refresh. */
+  const schedulePoll = useCallback(() => {
+    if (pollTimerRef.current) return;
+    let ticks = 0;
+    pollTimerRef.current = setInterval(() => {
+      ticks += 1;
+      void loadData();
+      if (ticks >= 20) {
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    }, 8_000);
+  }, [loadData]);
+
   useEffect(() => {
     setActiveTab('timeline');
     setShowEvidenceForm(false);
     setActionError(null);
     setActionNote(null);
+    setActionWarning(null);
     void loadData();
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
   }, [loadData]);
 
   const runAction = async (key: string, fn: () => Promise<void>, done: string) => {
     setActionBusy(key);
     setActionError(null);
     setActionNote(null);
+    setActionWarning(null);
     try {
       if (!getCourt().getSigner()) {
         setActionError('Connect your wallet first.');
@@ -70,7 +95,17 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
       setActionNote(done);
       await loadData();
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Transaction failed');
+      const friendly = describeError(err);
+      if (err instanceof Error && err.name === 'TransactionPendingError') {
+        setActionWarning(friendly.hint);
+        schedulePoll();
+        await loadData();
+      } else {
+        setActionError(friendly.hint ? `${friendly.title}: ${friendly.hint}` : (err instanceof Error ? err.message : 'Transaction failed'));
+        if (friendly.detail && err instanceof Error && err.message !== friendly.detail) {
+          setActionError((prev) => `${prev} (${friendly.detail})`);
+        }
+      }
     } finally {
       setActionBusy(null);
     }
@@ -250,6 +285,11 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
         </div>
         {actionError && (
           <div style={{ marginTop: '0.75rem', color: 'var(--danger)', fontSize: '0.9rem' }}>{actionError}</div>
+        )}
+        {actionWarning && (
+          <div style={{ marginTop: '0.75rem', color: 'var(--warning, #f59e0b)', fontSize: '0.9rem' }}>
+            {actionWarning} Auto-refreshing…
+          </div>
         )}
         {actionNote && (
           <div style={{ marginTop: '0.75rem', color: 'var(--success)', fontSize: '0.9rem' }}>{actionNote}</div>

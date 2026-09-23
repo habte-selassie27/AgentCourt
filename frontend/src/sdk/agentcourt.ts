@@ -326,9 +326,14 @@ export class AgentCourt {
     this.deployedChecked = true;
   }
 
-  private async writeCore(method: string, args: unknown[], value = BigInt(0)): Promise<string> {
+  private async writeCore(
+    method: string,
+    args: unknown[],
+    value = BigInt(0),
+    wait?: { waitRetries?: number; waitIntervalMs?: number },
+  ): Promise<string> {
     this.requireConnected();
-    return this.gl.genWrite(this.config.coreAddress, method, args, { value });
+    return this.gl.genWrite(this.config.coreAddress, method, args, { value, ...wait });
   }
 
   // ---------------------------------------------------------------------------
@@ -505,7 +510,12 @@ export class AgentCourt {
 
   /** Kick off nondeterministic evaluation + validator consensus. No verdict args. */
   async requestEvaluation(disputeId: bigint): Promise<void> {
-    await this.writeCore('request_evaluation', [Number(disputeId)]);
+    // LLM + adversarial + validator consensus regularly exceeds 30s / even 3 min.
+    // Budget ≈ 15 minutes (300 × 3s) before surfacing TransactionPendingError.
+    await this.writeCore('request_evaluation', [Number(disputeId)], BigInt(0), {
+      waitRetries: 300,
+      waitIntervalMs: 3_000,
+    });
   }
 
   /**

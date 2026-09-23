@@ -7,6 +7,8 @@ import {
   isResolved,
 } from '../frontend/src/dispute';
 import { VERDICTS, confidencePercent } from '../frontend/src/verdict';
+import { describeError } from '../frontend/src/sdk/errors';
+import { TransactionPendingError } from '../frontend/src/sdk/genlayer';
 
 describe('dispute domain', () => {
   it('includes evaluation fail-closed statuses', () => {
@@ -70,5 +72,29 @@ describe('bytes32 hash normalization', () => {
     expect(() => toBytes32('0x0xab', () => 'x')).toThrow();
     expect(() => toBytes32('zzzz', () => 'x')).toThrow();
     expect(() => toBytes32('0x' + 'aa'.repeat(33), () => 'x')).toThrow();
+  });
+});
+
+describe('describeError', () => {
+  it('classifies wait timeouts as still-processing, not network down', () => {
+    const err = new Error(
+      'Timed out waiting for transaction 0xabc to reach status "FINALIZED" (current status: 1).',
+    );
+    const friendly = describeError(err);
+    expect(friendly.title).toBe('Transaction still processing');
+    expect(friendly.retryable).toBe(false);
+  });
+
+  it('classifies TransactionPendingError as still-processing', () => {
+    const err = new TransactionPendingError('0xabc', 'PENDING');
+    const friendly = describeError(err);
+    expect(friendly.title).toBe('Transaction still processing');
+    expect(err.name).toBe('TransactionPendingError');
+    expect(err.hash).toBe('0xabc');
+  });
+
+  it('keeps generic fetch failures as network errors', () => {
+    const friendly = describeError(new Error('fetch failed'));
+    expect(friendly.title).toBe('Cannot reach the GenLayer network');
   });
 });

@@ -31,8 +31,24 @@ export function describeError(err: unknown): FriendlyError {
     };
   }
 
+  // Tx submitted but still running (evaluation / consensus takes minutes)
+  if (
+    e.name === 'TransactionPendingError' ||
+    /Timed out waiting for transaction|is still (PENDING|PROPOSING|COMMITTING|REVEALING)/i.test(message)
+  ) {
+    return {
+      title: 'Transaction still processing',
+      hint:
+        'The transaction was signed and is on-chain, but has not reached FINALIZED yet. ' +
+        'Request Evaluation (LLM + consensus) can take several minutes. ' +
+        'Do not resubmit — refresh this page in a minute or two.',
+      detail: message,
+      retryable: false,
+    };
+  }
+
   // Network / RPC reachability
-  if (/could not reach|network|fetch|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|Failed to fetch/i.test(message)) {
+  if (/could not reach|network|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|Failed to fetch/i.test(message)) {
     return {
       title: 'Cannot reach the GenLayer network',
       hint:

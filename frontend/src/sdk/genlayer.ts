@@ -33,6 +33,24 @@ export class ContractExecutionError extends Error {
   }
 }
 
+/**
+ * Tx was submitted but not FINALIZED yet (common for request_evaluation —
+ * LLM + consensus can run for many minutes).
+ */
+export class TransactionPendingError extends Error {
+  readonly hash: string;
+  readonly status: string;
+  constructor(hash: string, status: string) {
+    super(
+      `Transaction ${hash} is still ${status} on GenLayer. ` +
+        'Evaluation can take several minutes — do not resubmit; refresh this page.',
+    );
+    this.name = 'TransactionPendingError';
+    this.hash = hash;
+    this.status = status;
+  }
+}
+
 export interface GenCallResult<T = unknown> {
   ok: boolean;
   data?: T;
@@ -163,12 +181,15 @@ export class GenLayerClient {
   /**
    * Write through genlayer-js (NOT ethers/eth_call).
    * Returns the transaction hash; waits for FINALIZED and checks execution result.
+   *
+   * Default wait ≈ 3 minutes. request_evaluation (LLM + consensus) passes a much
+   * longer budget — genlayer-js defaults to only 10×3s.
    */
   async genWrite(
     to: string,
     method: string,
     args: unknown[],
-    opts: { value?: bigint } = {},
+    opts: { value?: bigint; waitRetries?: number; waitIntervalMs?: number } = {},
   ): Promise<string> {
     if (!this.writeClient) {
       throw new Error('Wallet not connected');
@@ -181,10 +202,42 @@ export class GenLayerClient {
       value: opts.value ?? BigInt(0),
     } as any);
 
-    const receipt = await this.client.waitForTransactionReceipt({
-      hash,
-      status: TransactionStatus.FINALIZED,
-    } as any);
+    // genlayer-js defaults: interval=3s, retries=10 → only ~30s. Evaluation needs minutes.
+    const interval = opts.waitIntervalMs ?? 3_000;
+    const retries = opts.waitRetries ?? 60; // ~3 min for normal writes
+
+    let receipt: unknown;
+    try {
+      receipt = await this.client.waitForTransactionReceipt({
+        hash,
+        status: TransactionStatus.FINALIZED,
+        interval,
+        retries,
+      } as any);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/Timed out waiting for transaction/i.test(message)) {
+        const current = await this.safeGetStatus(String(hash));
+        if (current !== null && current !== 'FINALIZED' && current !== '7') {
+          // Submitted and still progressing — not a failure.
+          throw new TransactionPendingError(String(hash), current);
+        }
+        // Finalized (or unknown status) between polls — fall through to re-check once.
+        receipt = await this.client
+          .waitForTransactionReceipt({
+            hash,
+            status: TransactionStatus.FINALIZED,
+            interval: 1_000,
+            retries: 5,
+          } as any)
+          .catch(() => null);
+        if (!receipt) {
+          throw new TransactionPendingError(String(hash), current ?? 'unknown');
+        }
+      } else {
+        throw err;
+      }
+    }
 
     // Preferred: explicit execution result when the node provides it.
     const execName = (receipt as any)?.txExecutionResultName;
@@ -202,6 +255,16 @@ export class GenLayerClient {
     this.assertLeaderReceiptOk(receipt, method);
 
     return String(hash);
+  }
+
+  private async safeGetStatus(hash: string): Promise<string | null> {
+    try {
+      const tx = (await this.client.getTransaction({ hash } as any)) as any;
+      const name = tx?.statusName ?? tx?.status;
+      return name === undefined || name === null ? null : String(name);
+    } catch {
+      return null;
+    }
   }
 }
 
