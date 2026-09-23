@@ -262,13 +262,21 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
   }
 
   return (
-    <div className="create-form" style={{ maxWidth: 700 }}>
+    <div className="create-form">
       <div className="section-header">
-        <h2>Create Dispute</h2>
+        <div>
+          <div className="hero-eyebrow">New claim · Studionet 61999</div>
+          <h2>Create Dispute</h2>
+          <p className="text-muted" style={{ fontSize: '0.88rem' }}>
+            File a structured claim. Evidence is submitted on-chain right after creation.
+          </p>
+        </div>
         <button className="btn btn-secondary" onClick={onCancel}>
           Cancel
         </button>
       </div>
+
+      <div className="form-card">
 
       {error && (
         <div style={errorBannerStyle}>
@@ -603,6 +611,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           {progress || (submitting ? 'Creating Dispute...' : 'Create Dispute')}
         </button>
       </form>
+      </div>
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>

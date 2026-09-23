@@ -102,10 +102,30 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>AgentCourt</h1>
+        <div className="brand">
+          <span className="brand-mark" role="img" aria-label="AgentCourt">⚖️</span>
+          <span className="brand-text">
+            <h1>AgentCourt</h1>
+            <span className="brand-tagline">Autonomous arbitration · GenLayer Studionet</span>
+          </span>
+        </div>
         <nav>
-          <a href="#" onClick={() => setCurrentView('dashboard')}>Dashboard</a>
-          <a href="#" onClick={() => setCurrentView('create')}>Create Dispute</a>
+          <button
+            type="button"
+            className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
+            aria-current={currentView === 'dashboard' ? 'page' : undefined}
+            onClick={() => setCurrentView('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
+            className={`nav-link ${currentView === 'create' ? 'active' : ''}`}
+            aria-current={currentView === 'create' ? 'page' : undefined}
+            onClick={() => setCurrentView('create')}
+          >
+            Create Dispute
+          </button>
           {wrongChain && (
             <button className="btn btn-warning" onClick={handleSwitchChain}>
               Switch to GenLayer
@@ -119,35 +139,28 @@ function App() {
       </header>
 
       {!walletConnected && (
-        <div style={{
-          background: 'var(--bg-tertiary)',
-          border: '1px solid var(--border)',
-          borderRadius: '8px',
-          padding: '1rem 1.5rem',
-          marginBottom: '1.5rem',
-          color: 'var(--text-secondary)',
-          fontSize: '0.9rem',
-        }}>
-          Connect your wallet to interact with AgentCourt contracts on GenLayer Studionet (Chain ID: 61999)
+        <div className="container" style={{ paddingBottom: 0 }}>
+          <div className="banner banner-info">
+            <strong>Connect your wallet</strong> to interact with AgentCourt contracts on GenLayer Studionet (Chain ID: 61999).
+          </div>
         </div>
       )}
 
       {walletConnected && wrongChain && (
-        <div style={{
-          background: '#3d2200',
-          border: '1px solid #f59e0b',
-          borderRadius: '8px',
-          padding: '1rem 1.5rem',
-          marginBottom: '1.5rem',
-          color: '#fbbf24',
-          fontSize: '0.9rem',
-        }}>
-          Wrong network. Please switch to GenLayer Studionet (Chain ID: 61999).
+        <div className="container" style={{ paddingBottom: 0 }}>
+          <div className="banner banner-warning">
+            <strong>Wrong network.</strong> Please switch to GenLayer Studionet (Chain ID: 61999).
+          </div>
         </div>
       )}
 
       <main className="container">
-        {currentView === 'dashboard' && <DisputeDashboard onViewDispute={handleViewDispute} />}
+        {currentView === 'dashboard' && (
+          <DisputeDashboard
+            onViewDispute={handleViewDispute}
+            onCreateDispute={() => setCurrentView('create')}
+          />
+        )}
         {currentView === 'create' && (
           <CreateDisputeForm
             onCreated={(id) => { setSelectedDisputeId(id); setCurrentView('detail'); }}
@@ -158,6 +171,15 @@ function App() {
           <DisputeDetail disputeId={selectedDisputeId} onBack={() => setCurrentView('dashboard')} />
         )}
       </main>
+
+      <footer className="footer">
+        <span>AgentCourt · GenLayer Studionet (61999) · Intelligent Contracts, no Solidity path</span>
+        <span>
+          <a href="https://explorer-studio.genlayer.com" target="_blank" rel="noreferrer">Explorer</a>
+          {' · '}
+          <a href="https://studio.genlayer.com/api" target="_blank" rel="noreferrer">RPC</a>
+        </span>
+      </footer>
     </div>
   );
 }

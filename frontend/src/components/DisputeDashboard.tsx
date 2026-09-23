@@ -6,6 +6,7 @@ import { formatStake, formatDateTime, shortAddress, getStatusClass, disputeIdLab
 
 interface DisputeDashboardProps {
   onViewDispute: (id: bigint) => void;
+  onCreateDispute?: () => void;
 }
 
 type TabFilter = 'all' | 'open' | 'active' | 'resolved';
@@ -25,7 +26,7 @@ function matchesFilter(d: DisputeRecord, f: TabFilter): boolean {
   return true;
 }
 
-export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
+export function DisputeDashboard({ onViewDispute, onCreateDispute }: DisputeDashboardProps) {
   const [filter, setFilter] = useState<TabFilter>('all');
   const [search, setSearch] = useState('');
   const [disputes, setDisputes] = useState<DisputeRecord[]>([]);
@@ -70,11 +71,46 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
 
   return (
     <>
+      <section className="hero">
+        <div className="hero-eyebrow">GenLayer Studionet · Chain 61999</div>
+        <h2>When agents disagree, let the evidence speak</h2>
+        <p>
+          Autonomous arbitration with verifiable evidence, independent reasoning,
+          adversarial review, and deterministic settlement.
+        </p>
+        <div className="hero-actions">
+          {onCreateDispute && (
+            <button className="btn btn-primary" onClick={onCreateDispute}>
+              + New Dispute
+            </button>
+          )}
+          <button className="btn btn-secondary" onClick={() => void load()} disabled={loading}>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+      </section>
+
       <div className="dashboard">
-        <div className="stat-card"><h3>Total Disputes</h3><div className="value">{disputes.length}</div></div>
-        <div className="stat-card"><h3>Open</h3><div className="value">{openCount}</div></div>
-        <div className="stat-card"><h3>In Progress</h3><div className="value">{activeCount}</div></div>
-        <div className="stat-card"><h3>Resolved</h3><div className="value">{resolvedCount}</div></div>
+        <div className="stat-card">
+          <div className="stat-top"><h3>Total Disputes</h3><span className="stat-icon">📁</span></div>
+          <div className="value">{disputes.length}</div>
+          <div className="stat-hint">All disputes on the connected core contract</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-top"><h3>Open</h3><span className="stat-icon">🟢</span></div>
+          <div className="value">{openCount}</div>
+          <div className="stat-hint">Awaiting evidence or investigation</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-top"><h3>In Progress</h3><span className="stat-icon">⚙️</span></div>
+          <div className="value">{activeCount}</div>
+          <div className="stat-hint">Under evaluation or review</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-top"><h3>Resolved</h3><span className="stat-icon">✅</span></div>
+          <div className="value">{resolvedCount}</div>
+          <div className="stat-hint">Verdict finalized or settled</div>
+        </div>
       </div>
 
       <div className="filter-bar">
@@ -96,7 +132,7 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
 
       <div className="section-header">
         <h2>Disputes</h2>
-        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <span className="text-muted" style={{ fontSize: '0.85rem' }}>
           {loading ? 'Loading from chain...' : `${filtered.length} of ${disputes.length}`}
         </span>
       </div>
@@ -133,12 +169,20 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
       <div className="dispute-list">
         {!error && filtered.length === 0 ? (
           <div className="empty-state">
+            <div className="empty-icon">⚖️</div>
             <h2>{disputes.length === 0 ? 'No disputes on chain yet' : 'No disputes found'}</h2>
             <p>
               {disputes.length === 0
-                ? 'Create a dispute to get started.'
+                ? 'Be the first to file a claim — evidence, evaluation, and settlement are all on-chain.'
                 : 'Try adjusting your search or filter.'}
             </p>
+            {disputes.length === 0 && onCreateDispute && (
+              <div className="empty-actions">
+                <button className="btn btn-primary" onClick={onCreateDispute}>
+                  Create your first dispute
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           filtered.map((d) => (
