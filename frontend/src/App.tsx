@@ -68,17 +68,18 @@ function App() {
 
   const handleSwitchChain = async () => {
     if (!window.ethereum) return;
+    const chainIdHex = `0x${TARGET_CHAIN_ID.toString(16)}`; // 61999 -> 0xF22F
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0xF227' }],
+        params: [{ chainId: chainIdHex }],
       });
     } catch (err: any) {
       if (err.code === 4902) {
         await window.ethereum.request({
           method: 'wallet_addEthereumChain',
           params: [{
-            chainId: '0xF227',
+            chainId: chainIdHex,
             chainName: 'GenLayer Studionet',
             nativeCurrency: { name: 'GEN', symbol: 'GEN', decimals: 18 },
             rpcUrls: ['https://studio.genlayer.com/api'],

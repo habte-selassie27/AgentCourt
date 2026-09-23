@@ -105,8 +105,8 @@ vercel --prod
 
 | Contract | Address | Tx / notes |
 |---|---|---|
-| ResolutionManager | `0xb9D0Cc8804DDE4C2c6205FB03397bb227395153B` | `set_core` wired |
-| AgentCourtCore | `0x6CEd519Ab915be4Bc6cd599C833CfA988772dA55` | ctor arg = manager above |
+| ResolutionManager | `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d` | `set_core` wired |
+| AgentCourtCore | `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47` | ctor arg = manager above |
 
 Active account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b`.
 
@@ -114,6 +114,8 @@ Active account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b`.
 
 | Address | What it is |
 |---|---|
+| `0xBa2e6a6Eb90B543E8F6e65cfeeB606c59577677B` | Prior current core; superseded by redeploy |
+| `0xEe3406BBF390afcfE6423a6f19815Ee0AE9125Ea` | Prior current manager; superseded by redeploy |
 | `0xA95331FD97E9D43CF0A3869E36F6C3E40C1b9F31` | Core deploy failed (`Address(Address)` TypeError) — not on chain |
 | `0x1201907228F04Fe454B9E4e878aB1077D591d45c` | Core pointed at pre-fix manager; superseded |
 | `0xE8Eae0b3CB3d0d2e92db037960914309758FA1c5` | Manager without `set_core` Address fix; superseded |
@@ -235,8 +237,8 @@ async function checkHealth() {
 ```
 
 ### Explorer Links
-- AgentCourtCore: `0x6CEd519Ab915be4Bc6cd599C833CfA988772dA55`
-- ResolutionManager: `0xb9D0Cc8804DDE4C2c6205FB03397bb227395153B`
+- AgentCourtCore: `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47`
+- ResolutionManager: `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d`
 - DisputeRegistry: removed from codebase (legacy: `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4`)
 
 ## Alerting

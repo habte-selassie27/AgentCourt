@@ -129,7 +129,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 
 ## Remaining Issues
 
-1. **Studionet redeploy complete** — `ResolutionManager` `0xb9D0Cc8804DDE4C2c6205FB03397bb227395153B`, `AgentCourtCore` `0x6CEd519Ab915be4Bc6cd599C833CfA988772dA55`, `set_core` verified via `get_core`. Verified live: `get_dispute_count` and `get_core` both respond on Studionet. Orphan/failed deploys listed in `docs/OPERATIONS.md`.
+1. **Studionet redeploy complete** — `ResolutionManager` `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d`, `AgentCourtCore` `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47`, `set_core` verified via `get_core`. Verified live: `get_dispute_count` and `get_core` both respond on Studionet. Orphan/failed deploys listed in `docs/OPERATIONS.md`.
 2. **No private keys in git history** — `.env` is gitignored and has never been committed (`git log --all -- .env` is empty). The local `.env` private key was redacted to a placeholder; rotate it anyway before any production use.
 3. **Stake/bond economic enforcement** is metadata-level (recorded amounts); real fund custody needs a GenLayer value-transfer / escrow design beyond this remediation.
 4. **LLM cost/latency** for `request_evaluation` is non-trivial (4+ prompts per run); cache or reduce roles for high-volume demos.
