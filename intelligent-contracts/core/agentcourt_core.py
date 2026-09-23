@@ -4,6 +4,23 @@ from genlayer import *
 import json
 
 
+def _to_address(value) -> Address:
+    """Normalize calldata address input to Address.
+
+    GenLayer Studio may cast a 0x… address to a decimal int in Constructor
+    Inputs; Address(int) raises OverflowError. Accept Address, hex str, or int.
+    """
+    if isinstance(value, Address):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value < 0 or value > (1 << 160) - 1:
+            raise gl.vm.UserError("Invalid address int")
+        return Address(f"0x{value:040x}")
+    if isinstance(value, str):
+        return Address(value)
+    raise gl.vm.UserError("Invalid address argument")
+
+
 # ---------------------------------------------------------------------------
 # Protocol enums (must stay aligned with frontend statusFromNum/verdictFromNum)
 # ---------------------------------------------------------------------------
@@ -506,11 +523,7 @@ class AgentCourtCore(gl.Contract):
     def __init__(self, resolution_manager):
         self.owner = gl.message.sender_address
         self.paused = False
-        # Calldata may already be Address; Address(Address) raises TypeError.
-        if isinstance(resolution_manager, Address):
-            self.resolution_manager = resolution_manager
-        else:
-            self.resolution_manager = Address(resolution_manager)
+        self.resolution_manager = _to_address(resolution_manager)
         self.next_dispute_id = u256(1)
         self.next_evidence_id = u256(1)
         self.next_evaluation_id = u256(1)

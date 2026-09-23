@@ -4,6 +4,24 @@ from genlayer import *
 import json
 
 
+def _to_address(value) -> Address:
+    """Normalize calldata address input to Address.
+
+    GenLayer Studio may cast a 0x… address to a decimal int in Constructor
+    Inputs / write args; Address(int) raises OverflowError.
+    Accept Address, hex str, or int.
+    """
+    if isinstance(value, Address):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value < 0 or value > (1 << 160) - 1:
+            raise gl.vm.UserError("Invalid address int")
+        return Address(f"0x{value:040x}")
+    if isinstance(value, str):
+        return Address(value)
+    raise gl.vm.UserError("Invalid address argument")
+
+
 def _days_from_civil(y: int, m: int, d: int) -> int:
     """Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant)."""
     y -= 1 if m <= 2 else 0
@@ -105,11 +123,7 @@ class ResolutionManager(gl.Contract):
         self._require_owner()
         if self.core != Address("0x0000000000000000000000000000000000000000"):
             raise gl.vm.UserError("Core already set")
-        # Calldata may already be Address; Address(Address) raises TypeError.
-        if isinstance(core_address, Address):
-            self.core = core_address
-        else:
-            self.core = Address(core_address)
+        self.core = _to_address(core_address)
 
     @gl.public.write
     def pause(self):

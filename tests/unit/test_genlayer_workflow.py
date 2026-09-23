@@ -641,3 +641,40 @@ class TestTimestampsAndDigest:
         aid = manager.open_appeal(3, PARTY_A, "new evidence")
         appeal = manager.get_appeal(aid)
         assert appeal["createdAt"] == self.STUB_UNIX
+
+
+# ---------------------------------------------------------------------------
+# 10. Studio Constructor Inputs may decimal-cast addresses to int
+# ---------------------------------------------------------------------------
+
+
+class TestAddressCoercion:
+    MANAGER_HEX = "0x3bFE289c35d056c2202dAEC650174966523FE7Da"
+    MANAGER_INT = int(MANAGER_HEX, 16)
+
+    def test_to_address_passes_address_through(self):
+        a = Address(self.MANAGER_HEX)
+        assert core_mod._to_address(a) is a
+
+    def test_to_address_accepts_hex_string(self):
+        assert str(core_mod._to_address(self.MANAGER_HEX)).lower() == self.MANAGER_HEX.lower()
+
+    def test_to_address_accepts_studio_decimal_int(self):
+        out = core_mod._to_address(self.MANAGER_INT)
+        assert str(out).lower() == self.MANAGER_HEX.lower()
+
+    def test_core_constructor_accepts_int_manager(self):
+        _Message.sender_address = RESET_SENDER
+        core = AgentCourtCore(self.MANAGER_INT)
+        assert str(core.resolution_manager).lower() == self.MANAGER_HEX.lower()
+
+    def test_set_core_accepts_int_core_address(self):
+        manager = make_resolution_manager()
+        core_int = int("0x00000000000000000000000000000000000000c1", 16)
+        _Message.sender_address = RESET_SENDER
+        manager.set_core(core_int)
+        assert str(manager.core) == "0x00000000000000000000000000000000000000c1"
+
+    def test_address_int_out_of_range_rejected(self):
+        with pytest.raises(_UserError):
+            core_mod._to_address((1 << 160))

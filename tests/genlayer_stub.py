@@ -33,8 +33,18 @@ class _VMError:
 
 
 class Address(str):
-    def __new__(cls, value: Any):
-        return super().__new__(cls, str(value))
+    """Accepts Address, hex str, or int (Studio decimal-cast calldata)."""
+
+    def __new__(cls, value):
+        if isinstance(value, Address):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool):
+            if value < 0 or value > (1 << 160) - 1:
+                raise ValueError("address int out of range")
+            return str.__new__(cls, f"0x{value:040x}")
+        if isinstance(value, str):
+            return str.__new__(cls, value)
+        raise TypeError(f"unsupported address type: {type(value)!r}")
 
 
 def u256(value: Any = 0) -> int:
