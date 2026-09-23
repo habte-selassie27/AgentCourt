@@ -110,8 +110,8 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 5. Validator disagreement → `DISPUTED` / `INCONCLUSIVE`  
 6. Consensus majority → `CONSENSUS` + TRUE/FALSE mapping  
 7. Evaluation failure → `EVALUATION_FAILED`, not finalizable  
-8. Only evaluation+consensus finalizes; settlement reads core verdict
-9. Real unix timestamps from `gl.message_raw['datetime']`; Keccak-256 `reasoningHash`  
+8. Only evaluation+consensus finalizes; settlement reads core verdict  
+9. Real unix timestamps from `gl.message_raw['datetime']`; Keccak-256 `reasoningHash`
 
 ## Checks
 

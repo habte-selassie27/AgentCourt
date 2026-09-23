@@ -29,7 +29,7 @@ fi
 fail=0
 
 echo "==> Core: get_dispute_count"
-COUNT_OUT=$(genlayer call "$CORE" get_dispute_count || true)
+COUNT_OUT=$(genlayer call "$CORE" get_dispute_count 2>&1 || true)
 echo "$COUNT_OUT"
 if ! echo "$COUNT_OUT" | grep -q "successfully executed"; then
   echo "FAIL: core did not respond" >&2
@@ -37,7 +37,7 @@ if ! echo "$COUNT_OUT" | grep -q "successfully executed"; then
 fi
 
 echo "==> Manager: get_core"
-WIRE_OUT=$(genlayer call "$MANAGER" get_core || true)
+WIRE_OUT=$(genlayer call "$MANAGER" get_core 2>&1 || true)
 echo "$WIRE_OUT"
 WIRED=$(echo "$WIRE_OUT" | grep -Eo '0x[0-9a-fA-F]{40}' | tail -1 || true)
 
@@ -52,8 +52,10 @@ else
 fi
 
 echo "==> Core: get_owner / is_paused"
-genlayer call "$CORE" get_owner || fail=1
-genlayer call "$CORE" is_paused || fail=1
+OWNER_OUT=$(genlayer call "$CORE" get_owner 2>&1) || { echo "FAIL: get_owner"; fail=1; }
+echo "$OWNER_OUT"
+PAUSED_OUT=$(genlayer call "$CORE" is_paused 2>&1) || { echo "FAIL: is_paused"; fail=1; }
+echo "$PAUSED_OUT"
 
 if [ "$fail" -ne 0 ]; then
   echo "Verification FAILED" >&2
