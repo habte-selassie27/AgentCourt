@@ -8,6 +8,7 @@ interface CreateDisputeFormProps {
 }
 
 const DRAFT_KEY = 'agentcourt.createDispute.draft.v1';
+const PENDING_KEY = 'agentcourt.createDispute.pendingId';
 
 interface CreateDisputeDraft {
   respondent: string;
@@ -42,6 +43,33 @@ function saveDraft(draft: CreateDisputeDraft): void {
 function clearDraft(): void {
   try {
     localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function loadPendingId(): bigint | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const n = BigInt(raw);
+    return n > 0n ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingId(id: bigint): void {
+  try {
+    localStorage.setItem(PENDING_KEY, id.toString());
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingId(): void {
+  try {
+    localStorage.removeItem(PENDING_KEY);
   } catch {
     // ignore
   }
@@ -176,7 +204,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [createdId, setCreatedId] = useState<bigint | null>(null);
+  const [createdId, setCreatedId] = useState<bigint | null>(() => loadPendingId());
   const [navigating, setNavigating] = useState(false);
   const [draftRestored, setDraftRestored] = useState(hadDraft.current);
 
@@ -199,6 +227,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
 
   function discardDraft() {
     clearDraft();
+    clearPendingId();
     setRespondent('');
     setAgreementHash('');
     setClaimType('DELIVERY_FAILURE');
@@ -207,6 +236,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     setDeadline(defaultDeadline);
     setEvidence([emptyEvidence()]);
     setDraftRestored(false);
+    setCreatedId(null);
     setError('');
     setSuccess('');
   }
@@ -300,6 +330,10 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         deadline: deadlineTs,
       });
 
+      // Persist immediately — a mid-flight reload must not offer a second create.
+      setCreatedId(disputeId);
+      savePendingId(disputeId);
+
       let submitted = 0;
       const failures: string[] = [];
 
@@ -322,9 +356,10 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
 
       if (failures.length > 0) {
         setCreatedId(disputeId);
+        savePendingId(disputeId);
         setError(
           `Dispute #${disputeId} was created with ${submitted} of ${prepared.length} evidence items. ` +
-            `Failed — ${failures.join('; ')}`,
+            `Failed — ${failures.join('; ')} — open the dispute to add the missing evidence.`,
         );
         return;
       }
@@ -333,6 +368,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       setSuccess(`Dispute #${disputeId} created successfully with all ${submitted} evidence items.`);
       // Dispute exists on-chain — drop the draft so a later Create isn't prefilled with a duplicate.
       clearDraft();
+      clearPendingId();
       setDraftRestored(false);
       // Leave the create form — don't leave the submit button looking clickable again.
       didNavigate = true;
@@ -483,7 +519,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       )}
 
       {createdId !== null && !navigating && (
-        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn btn-primary"
@@ -497,6 +533,21 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
             onClick={onCancel}
           >
             Back to Dashboard
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              clearPendingId();
+              clearDraft();
+              setCreatedId(null);
+              setDraftRestored(false);
+              setError('');
+              setSuccess('');
+            }}
+            title="This dispute already exists on-chain. Clear only if you are sure you need a new one."
+          >
+            Start a different dispute
           </button>
         </div>
       )}
@@ -766,9 +817,11 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           )}
           {navigating
             ? 'Opening dispute...'
-            : createdId !== null
-              ? 'Dispute created'
-              : progress || (submitting ? 'Creating Dispute...' : 'Create Dispute')}
+            : submitting
+              ? progress || 'Creating Dispute...'
+              : createdId !== null
+                ? 'Dispute created'
+                : 'Create Dispute'}
         </button>
       </form>
       </div>

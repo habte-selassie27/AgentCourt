@@ -23,19 +23,43 @@ function App() {
 
   useEffect(() => {
     if (!window.ethereum) return;
-    window.ethereum.on('accountsChanged', (accounts: string[]) => {
+
+    let lastChainId: number | null = null;
+    const onAccountsChanged = (accounts: string[]) => {
       if (accounts.length === 0) {
         setWalletConnected(false);
         setWalletAddress('');
       } else {
         setWalletAddress(String(accounts[0] ?? ''));
       }
-    });
-    window.ethereum.on('chainChanged', (chainHex: string) => {
+    };
+    const onChainChanged = (chainHex: string) => {
       const id = parseInt(chainHex, 16);
+      // Wallets re-emit chainChanged after every tx on the same chain.
+      // A full reload here wipes an in-flight Create Dispute submit.
+      if (lastChainId !== null && id === lastChainId) return;
+      const changedFromKnown = lastChainId !== null;
+      lastChainId = id;
       setWrongChain(id !== TARGET_CHAIN_ID);
-      window.location.reload();
-    });
+      if (changedFromKnown && id !== TARGET_CHAIN_ID) {
+        window.location.reload();
+      }
+    };
+
+    // Seed from current chain so the first post-tx re-emit is ignored.
+    window.ethereum
+      .request({ method: 'eth_chainId' })
+      .then((chainHex: string) => {
+        lastChainId = parseInt(String(chainHex), 16);
+      })
+      .catch(() => {});
+
+    window.ethereum.on('accountsChanged', onAccountsChanged);
+    window.ethereum.on('chainChanged', onChainChanged);
+    return () => {
+      window.ethereum?.removeListener?.('accountsChanged', onAccountsChanged);
+      window.ethereum?.removeListener?.('chainChanged', onChainChanged);
+    };
   }, []);
 
   const handleConnectWallet = async () => {
