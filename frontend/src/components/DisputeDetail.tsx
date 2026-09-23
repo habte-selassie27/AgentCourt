@@ -32,6 +32,9 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<DetailTab>('timeline');
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -49,8 +52,29 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
   useEffect(() => {
     setActiveTab('timeline');
     setShowEvidenceForm(false);
+    setActionError(null);
+    setActionNote(null);
     void loadData();
   }, [loadData]);
+
+  const runAction = async (key: string, fn: () => Promise<void>, done: string) => {
+    setActionBusy(key);
+    setActionError(null);
+    setActionNote(null);
+    try {
+      if (!getCourt().getSigner()) {
+        setActionError('Connect your wallet first.');
+        return;
+      }
+      await fn();
+      setActionNote(done);
+      await loadData();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Transaction failed');
+    } finally {
+      setActionBusy(null);
+    }
+  };
 
   if (loading) {
     return <div className="empty-state">Loading dispute #{disputeId.toString()} from chain...</div>;
@@ -75,7 +99,8 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     );
   }
 
-  const { dispute, evidence, verdict, consensus } = data;
+  const { dispute, evidence, verdict, consensus, evaluation } = data;
+  const status = dispute.status;
 
   const timeline = buildTimeline({
     status: dispute.status,
@@ -86,6 +111,7 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     hasVerdict: verdict !== null,
     verdictLabel: verdict?.verdict,
     verdictTime: verdict?.finalizedAt,
+    evaluationState: evaluation?.state ?? null,
   });
 
   const evidenceItems = evidence.map((item) => ({
@@ -102,33 +128,54 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     crossReferences: [] as string[],
   }));
 
-  // Consensus submissions are the only per-evaluator records the protocol
-  // stores, so they drive both the Evaluators and Consensus views.
   const evaluators: EvaluatorRecord[] = consensus.map((record) => ({
-    id: shortAddress(record.evaluator),
+    id: record.reasoning ? `${record.evaluator}` : shortAddress(record.evaluator),
     verdict: record.verdict,
     confidence: confidencePercent(record.confidence),
     reasoningHash: shortHex(record.reasoningHash),
     timestamp: formatTime(record.timestamp),
+    evidenceIds: record.evidenceIds,
   }));
 
   const consensusData = computeConsensus(evaluators);
 
+  const canInvestigate =
+    (status === 'EVIDENCE_COLLECTION' || status === 'OPEN') && Boolean(getCourt().getSigner());
+  const canEvaluate =
+    [
+      'INVESTIGATION',
+      'DELIBERATION',
+      'ADVERSARIAL_REVIEW',
+      'CONSENSUS',
+      'EVALUATION_FAILED',
+      'INCONCLUSIVE',
+      'DISPUTED',
+      'APPEALED',
+    ].includes(status) && Boolean(getCourt().getSigner());
+  const canFinalize =
+    ['CONSENSUS', 'INCONCLUSIVE', 'DISPUTED'].includes(status) && Boolean(getCourt().getSigner());
+  const canSettle =
+    status === 'VERDICT' && verdict !== null && !verdict.reviewRequired && Boolean(getCourt().getSigner());
+  const canAppeal =
+    (status === 'VERDICT' || status === 'CLOSED') && Boolean(getCourt().getSigner());
+
   const tabs: { key: DetailTab; label: string; visible: boolean }[] = [
     { key: 'timeline', label: 'Timeline', visible: true },
     { key: 'evidence', label: 'Evidence', visible: true },
-    { key: 'evaluators', label: 'Evaluators', visible: consensus.length > 0 },
-    { key: 'adversarial', label: 'Adversarial', visible: true },
-    { key: 'consensus', label: 'Consensus', visible: consensus.length > 0 },
+    { key: 'evaluators', label: 'Evaluators', visible: consensus.length > 0 || evaluation !== null },
+    { key: 'adversarial', label: 'Adversarial', visible: evaluation !== null || true },
+    { key: 'consensus', label: 'Consensus', visible: consensus.length > 0 || evaluation !== null },
     { key: 'verdict', label: 'Verdict', visible: verdict !== null },
   ];
 
   const visibleTabs = tabs.filter((t) => t.visible);
 
+  const adversarial = evaluation?.adversarial ?? null;
+
   return (
     <>
       <div className="section-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={onBack}>Back</button>
           <h2>{disputeIdLabel(dispute.id)}</h2>
           <span className={getStatusClass(dispute.status)}>{dispute.status.replace(/_/g, ' ')}</span>
@@ -136,6 +183,101 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
             ON-CHAIN
           </span>
         </div>
+      </div>
+
+      <div className="workflow-actions stat-card" style={{ marginBottom: '1.25rem' }}>
+        <h3>Workflow</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0.35rem 0 0.75rem' }}>
+          Callers supply claim and evidence only. Evaluation and verdict are produced on-chain via
+          nondeterministic LLM + validator consensus — never passed in as arguments.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button
+            className="btn btn-secondary"
+            disabled={!canInvestigate || actionBusy !== null}
+            onClick={() =>
+              void runAction('investigate', () => getCourt().startInvestigation(disputeId), 'Investigation started.')
+            }
+          >
+            {actionBusy === 'investigate' ? 'Starting…' : 'Start Investigation'}
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!canEvaluate || actionBusy !== null}
+            title="Runs independent evaluators + adversarial review under GenLayer validator consensus"
+            onClick={() =>
+              void runAction(
+                'evaluate',
+                () => getCourt().requestEvaluation(disputeId),
+                'Evaluation transaction finalized. Refresh to view consensus state.',
+              )
+            }
+          >
+            {actionBusy === 'evaluate' ? 'Evaluating (LLM + consensus)…' : 'Request Evaluation'}
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!canFinalize || actionBusy !== null}
+            title="Derives verdict from the stored evaluation — no verdict parameter"
+            onClick={() =>
+              void runAction('finalize', () => getCourt().finalizeVerdict(disputeId), 'Verdict finalized from evaluation.')
+            }
+          >
+            {actionBusy === 'finalize' ? 'Finalizing…' : 'Finalize Verdict'}
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!canSettle || actionBusy !== null}
+            onClick={() =>
+              void runAction('settle', () => getCourt().executeSettlement(disputeId), 'Settlement executed.')
+            }
+          >
+            {actionBusy === 'settle' ? 'Settling…' : 'Execute Settlement'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={!canAppeal || actionBusy !== null}
+            onClick={() =>
+              void runAction(
+                'appeal',
+                () => getCourt().openAppeal(disputeId, 'Party appeal after finalized verdict'),
+                'Appeal opened. Re-run evaluation to supersede.',
+              )
+            }
+          >
+            {actionBusy === 'appeal' ? 'Opening…' : 'Open Appeal'}
+          </button>
+        </div>
+        {actionError && (
+          <div style={{ marginTop: '0.75rem', color: 'var(--danger)', fontSize: '0.9rem' }}>{actionError}</div>
+        )}
+        {actionNote && (
+          <div style={{ marginTop: '0.75rem', color: 'var(--success)', fontSize: '0.9rem' }}>{actionNote}</div>
+        )}
+        {evaluation && (
+          <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            Evaluation state:{' '}
+            <strong style={{ color: 'var(--text-primary)' }}>{evaluation.state}</strong>
+            {evaluation.error ? ` — ${evaluation.error}` : ''}
+            {' · '}valid evaluators: {evaluation.consensus.validCount}
+            {' · '}agreement: {(evaluation.consensus.agreementRatio * 100).toFixed(0)}%
+          </div>
+        )}
+        {status === 'EVALUATION_FAILED' && (
+          <div style={{ marginTop: '0.5rem', color: 'var(--danger)', fontSize: '0.85rem' }}>
+            Evaluation failed (fail-closed). No verdict was written. Fix evidence or retry evaluation.
+          </div>
+        )}
+        {status === 'INCONCLUSIVE' && (
+          <div style={{ marginTop: '0.5rem', color: 'var(--warning)', fontSize: '0.85rem' }}>
+            Inconclusive — finalizing will freeze settlement (UNVERIFIABLE / REVIEW required).
+          </div>
+        )}
+        {status === 'DISPUTED' && (
+          <div style={{ marginTop: '0.5rem', color: 'var(--warning)', fontSize: '0.85rem' }}>
+            Evaluators materially disagree — dispute state; finalizing freezes settlement.
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
@@ -166,9 +308,12 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
 
       {verdict && (
         <div className="verdict-display" style={{ marginBottom: '1.5rem' }}>
-          <div className="verdict-label">Final Verdict</div>
+          <div className="verdict-label">Final Verdict (derived from evaluation)</div>
           <div className={`verdict-value verdict-${verdict.verdict}`}>{verdict.verdict}</div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Confidence: {confidencePercent(verdict.confidence)}%</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            Confidence: {confidencePercent(verdict.confidence)}% · Resolution: {verdict.resolution}
+            {verdict.reviewRequired ? ' · Review required (settlement frozen)' : ''}
+          </div>
           <div className="confidence-bar large">
             <div className="confidence-fill" style={{ width: `${confidencePercent(verdict.confidence)}%` }} />
           </div>
@@ -228,32 +373,95 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
         </>
       )}
 
-      {activeTab === 'evaluators' && <EvaluatorResults evaluators={evaluators} />}
+      {activeTab === 'evaluators' && (
+        evaluators.length > 0 ? (
+          <EvaluatorResults evaluators={evaluators} />
+        ) : (
+          <div className="empty-state" style={{ padding: '2rem' }}>
+            <p>
+              {status === 'EVALUATION_PENDING'
+                ? 'Evaluation is running…'
+                : 'No evaluation yet. Use Request Evaluation after investigation starts.'}
+            </p>
+          </div>
+        )
+      )}
 
       {activeTab === 'adversarial' && (
         <div className="adversarial-findings">
           <div className="section-header">
             <h2>Adversarial Review</h2>
+            {adversarial && (
+              <span
+                className="status-badge"
+                style={{
+                  background: adversarial.verdictUpheld ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                  color: adversarial.verdictUpheld ? 'var(--success)' : 'var(--danger)',
+                }}
+              >
+                {adversarial.verdictUpheld ? 'CONSENSUS UPHELD' : 'CONSENSUS CHALLENGED'}
+              </span>
+            )}
           </div>
-          <div className="stat-card">
-            <h3>Not recorded on-chain</h3>
-            <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>
-              The contracts store evaluator consensus submissions and the finalized verdict, but
-              adversarial challenges are not persisted anywhere yet. Once a review pipeline writes
-              them to a registry, they will appear here.
+          {adversarial ? (
+            <>
+              <div className="stat-card" style={{ marginBottom: '1rem' }}>
+                <h3>Reviewer Reasoning</h3>
+                <div style={{ marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>{adversarial.reasoning || '(empty)'}</div>
+                <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Confidence adjustment: {adversarial.confidenceAdjustment} points
+                </div>
+              </div>
+              {adversarial.challenges.length > 0 && (
+                <div className="evaluator-cards">
+                  {adversarial.challenges.map((c, i) => (
+                    <div key={i} className="evaluator-card">
+                      <div className="evaluator-header">
+                        <span className="evaluator-id">{c.type}</span>
+                        <span style={{ color: c.affectsVerdict ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                          severity {(c.severity * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>{c.description}</div>
+                      {c.affectsVerdict && (
+                        <div className="evaluator-badge majority" style={{ background: 'rgba(239,68,68,0.2)', color: 'var(--danger)' }}>
+                          Affects verdict
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="stat-card">
+              <h3>Not evaluated yet</h3>
+              <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>
+                Adversarial findings are written on-chain when Request Evaluation completes.
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
       {activeTab === 'consensus' && (
         <ConsensusView
           evaluatorCount={consensus.length}
-          agreementRatio={consensusData.agreementRatio}
-          breakdown={consensusData.counts}
-          disagreementDetected={consensusData.disagreementDetected}
-          requiresReview={verdict?.reviewRequired ?? false}
-          reasoning={buildConsensusSummary(evaluators, consensusData, verdict?.verdict, verdict ? confidencePercent(verdict.confidence) : undefined, verdict?.reviewRequired)}
+          agreementRatio={
+            evaluation?.consensus.agreementRatio ?? consensusData.agreementRatio
+          }
+          breakdown={evaluation?.consensus.counts ?? consensusData.counts}
+          disagreementDetected={
+            (evaluation?.consensus.state === 'DISPUTED') || consensusData.disagreementDetected
+          }
+          requiresReview={verdict?.reviewRequired ?? evaluation?.consensus.reviewRequired ?? false}
+          reasoning={buildConsensusSummary(
+            evaluators,
+            consensusData,
+            verdict?.verdict,
+            verdict ? confidencePercent(verdict.confidence) : undefined,
+            verdict?.reviewRequired,
+          )}
         />
       )}
 
@@ -262,8 +470,6 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           verdict={{
             verdict: verdict.verdict,
             confidence: confidencePercent(verdict.confidence),
-            // The on-chain verdict carries a single referenced-evidence list
-            // rather than a supporting/contradicting split.
             supportingEvidence: [],
             contradictingEvidence: [],
             evidenceIds: verdict.evidenceIds.map(evidenceIdLabel),

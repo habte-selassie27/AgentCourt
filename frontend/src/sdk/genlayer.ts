@@ -1,8 +1,12 @@
-// Minimal GenLayer JSON-RPC client for Intelligent Contracts (Python ICs).
+// GenLayer JSON-RPC client for Intelligent Contracts (Python ICs).
 //
-// ICs are not Solidity contracts: `eth_call` against them returns placeholder
-// data, so ALL reads must go through `gen_call` with a JSON payload
-// hex-encoded into `data`.
+// Uses the official genlayer-js SDK for proper calldata encoding.
+// ICs are NOT Solidity contracts — `eth_call` returns placeholder data,
+// so ALL reads go through `gen_call` with GenLayer-native binary calldata.
+
+import { createClient } from 'genlayer-js';
+import { studionet } from 'genlayer-js/chains';
+import { ExecutionResult, TransactionStatus } from 'genlayer-js/types';
 
 export class GenlayerRpcError extends Error {
   readonly code: number | undefined;
@@ -27,37 +31,53 @@ export class ContractExecutionError extends Error {
 
 export interface GenCallResult<T = unknown> {
   ok: boolean;
-  /** Decoded JSON result when ok, undefined otherwise. */
   data?: T;
-  /** Structured error info when !ok. */
   error?: {
     kind: 'rpc' | 'execution';
     code?: number;
     message: string;
-    /** Base64 receipt result (often "exit_code 1") when kind === 'execution'. */
     executionResult?: string;
   };
 }
 
-function utf8ToHex(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let hex = '0x';
-  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
-  return hex;
-}
-
-function base64ToUtf8(b64: string): string {
-  try {
-    return atob(b64);
-  } catch {
-    return b64;
-  }
-}
+type AnyClient = ReturnType<typeof createClient>;
 
 export class GenLayerClient {
-  private nextId = 1;
+  private client: AnyClient;
+  private writeClient: AnyClient | null = null;
+  private writeAddress: `0x${string}` | null = null;
 
-  constructor(readonly rpcUrl: string) {}
+  constructor(readonly rpcUrl: string) {
+    this.client = createClient({
+      endpoint: rpcUrl,
+      chain: {
+        ...studionet,
+        rpcUrls: { default: { http: [rpcUrl] } },
+      },
+    });
+  }
+
+  /** Attach a browser wallet for writeContract (MetaMask / Rabby / etc.). */
+  async connectWallet(ethereum: unknown, address: `0x${string}`): Promise<void> {
+    this.writeAddress = address;
+    this.writeClient = createClient({
+      endpoint: this.rpcUrl,
+      chain: {
+        ...studionet,
+        rpcUrls: { default: { http: [this.rpcUrl] } },
+      },
+      account: address,
+      provider: ethereum as any,
+    } as any);
+  }
+
+  get connectedAddress(): `0x${string}` | null {
+    return this.writeAddress;
+  }
+
+  get hasWriteClient(): boolean {
+    return this.writeClient !== null;
+  }
 
   async genCall<T = unknown>(to: string, method: string, args: unknown[]): Promise<T> {
     const res = await this.genCallRaw<T>(to, method, args);
@@ -66,90 +86,84 @@ export class GenLayerClient {
   }
 
   async genCallRaw<T = unknown>(to: string, method: string, args: unknown[]): Promise<GenCallResult<T>> {
-    let res: Response;
     try {
-      res = await fetch(this.rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: this.nextId++,
-          method: 'gen_call',
-          params: [
-            {
-              from: '0x0000000000000000000000000000000000000000',
-              to,
-              type: 'read',
-              data: utf8ToHex(JSON.stringify({ method, args })),
-            },
-          ],
-        }),
+      const result = await this.client.readContract({
+        address: to as `0x${string}`,
+        functionName: method,
+        args: args as any[],
       });
-    } catch (e) {
-      return {
-        ok: false,
-        error: {
-          kind: 'rpc',
-          message: `Could not reach the GenLayer RPC (${this.rpcUrl}). Check your connection or the VITE_RPC_URL setting.`,
-        },
-      };
-    }
+      return { ok: true, data: result as T };
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
 
-    let json: {
-      result?: string;
-      error?: { code?: number; message?: string; data?: { receipt?: { result?: string } } };
-    };
-    try {
-      json = await res.json();
-    } catch {
-      return {
-        ok: false,
-        error: { kind: 'rpc', message: `GenLayer RPC returned a non-JSON response (HTTP ${res.status}).` },
-      };
-    }
-
-    if (json.error) {
-      const receipt = json.error.data?.receipt;
-      if (receipt) {
-        const executionResult = receipt.result ? base64ToUtf8(receipt.result) : undefined;
+      // Check for contract execution errors
+      if (/execution failed|exit_code|contract execution/i.test(message)) {
         return {
           ok: false,
           error: {
             kind: 'execution',
-            code: json.error.code,
-            message: `Contract execution failed (${executionResult ?? json.error.message ?? 'unknown error'}).`,
-            executionResult,
+            message: `Contract execution failed (${message}).`,
+            executionResult: message,
           },
         };
       }
+
+      // Network / RPC errors
+      if (/fetch|network|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|failed to fetch/i.test(message)) {
+        return {
+          ok: false,
+          error: {
+            kind: 'rpc',
+            message: `Could not reach the GenLayer RPC (${this.rpcUrl}). Check your connection or the VITE_RPC_URL setting.`,
+          },
+        };
+      }
+
       return {
         ok: false,
-        error: { kind: 'rpc', code: json.error.code, message: json.error.message ?? 'Unknown RPC error.' },
+        error: { kind: 'rpc', message },
       };
     }
+  }
 
-    if (typeof json.result !== 'string') {
-      // Some nodes return the parsed value directly.
-      return { ok: true, data: json.result as T };
+  /**
+   * Write through genlayer-js (NOT ethers/eth_call).
+   * Returns the transaction hash; waits for FINALIZED and checks execution result.
+   */
+  async genWrite(
+    to: string,
+    method: string,
+    args: unknown[],
+    opts: { value?: bigint } = {},
+  ): Promise<string> {
+    if (!this.writeClient) {
+      throw new Error('Wallet not connected');
     }
 
-    const raw = json.result;
-    if (raw.startsWith('0x')) {
-      // Hex-encoded JSON or hex-encoded string.
-      const bytes = new Uint8Array(
-        (raw.slice(2).match(/.{2}/g) ?? []).map((h) => parseInt(h, 16)),
-      );
-      const decoded = new TextDecoder().decode(bytes);
-      try {
-        return { ok: true, data: JSON.parse(decoded) as T };
-      } catch {
-        return { ok: true, data: decoded as unknown as T };
-      }
+    const hash = await this.writeClient.writeContract({
+      address: to as `0x${string}`,
+      functionName: method,
+      args: args as any[],
+      value: opts.value ?? BigInt(0),
+    } as any);
+
+    const receipt = await this.client.waitForTransactionReceipt({
+      hash,
+      status: TransactionStatus.FINALIZED,
+    } as any);
+
+    const execName = (receipt as any)?.txExecutionResultName;
+    if (
+      execName !== undefined &&
+      execName !== null &&
+      execName !== ExecutionResult.FINISHED_WITH_RETURN &&
+      execName !== 'FINISHED_WITH_RETURN'
+    ) {
+      throw new ContractExecutionError(method, String(execName));
     }
-    try {
-      return { ok: true, data: JSON.parse(raw) as T };
-    } catch {
-      return { ok: true, data: raw as unknown as T };
-    }
+
+    return String(hash);
   }
 }
+
+export { ExecutionResult, TransactionStatus };

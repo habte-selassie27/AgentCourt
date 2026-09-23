@@ -18,6 +18,10 @@ export const DISPUTE_STATUSES = [
   'SETTLEMENT',
   'CLOSED',
   'APPEALED',
+  'EVALUATION_PENDING',
+  'EVALUATION_FAILED',
+  'INCONCLUSIVE',
+  'DISPUTED',
 ] as const;
 
 export type DisputeStatus = (typeof DISPUTE_STATUSES)[number];
@@ -84,7 +88,7 @@ export function statusRank(status: string): number {
 
 /** Returns true if the dispute is still in an active (non-terminal) state. */
 export function isActive(status: string): boolean {
-  return !['OPEN', 'VERDICT', 'CLOSED', 'APPEALED'].includes(status);
+  return !['CLOSED', 'VERDICT'].includes(status);
 }
 
 /** Returns true if the dispute is terminal. */
@@ -103,15 +107,6 @@ export interface TimelineEntry {
   active: boolean;
 }
 
-const PHASE = {
-  evidenceCollection: STATUS_INDEX.EVIDENCE_COLLECTION,
-  investigation: STATUS_INDEX.INVESTIGATION,
-  deliberation: STATUS_INDEX.DELIBERATION,
-  adversarialReview: STATUS_INDEX.ADVERSARIAL_REVIEW,
-  settlement: STATUS_INDEX.SETTLEMENT,
-  closed: STATUS_INDEX.CLOSED,
-};
-
 interface TimelineInput {
   status: string;
   createdAt: bigint;
@@ -121,14 +116,16 @@ interface TimelineInput {
   hasVerdict: boolean;
   verdictLabel?: string;
   verdictTime?: bigint;
+  evaluationState?: string | null;
 }
 
 /**
- * Builds a dispute timeline from real on-chain state. Each phase is marked
- * complete only once the status has advanced past it.
+ * Builds a dispute timeline from real on-chain state, including evaluation
+ * outcomes (pending / consensus / inconclusive / disputed / failed).
  */
 export function buildTimeline(input: TimelineInput): TimelineEntry[] {
-  const rank = statusRank(input.status);
+  const status = input.status;
+  const rank = statusRank(status);
 
   const steps: { done: boolean; label: string; time?: string }[] = [
     {
@@ -137,27 +134,48 @@ export function buildTimeline(input: TimelineInput): TimelineEntry[] {
       time: formatTime(input.createdAt),
     },
     {
-      done: rank >= PHASE.evidenceCollection,
+      done: rank >= STATUS_INDEX.EVIDENCE_COLLECTION,
       label:
         input.evidenceCount > 0
           ? `Evidence recorded (${input.evidenceCount} item${input.evidenceCount === 1 ? '' : 's'})`
           : 'Evidence collection open (no items submitted)',
       time: input.latestEvidenceTime ? formatTime(input.latestEvidenceTime) : undefined,
     },
-    { done: rank >= PHASE.investigation, label: 'Investigation started' },
-    { done: rank >= PHASE.deliberation, label: 'Deliberation started' },
-    { done: rank >= PHASE.adversarialReview, label: 'Adversarial review started' },
+    { done: rank >= STATUS_INDEX.INVESTIGATION || rank >= STATUS_INDEX.CONSENSUS, label: 'Investigation started' },
     {
-      done: input.consensusCount > 0,
-      label: `Consensus submissions recorded (${input.consensusCount})`,
+      done:
+        status === 'CONSENSUS' ||
+        status === 'INCONCLUSIVE' ||
+        status === 'DISPUTED' ||
+        status === 'EVALUATION_FAILED' ||
+        input.hasVerdict ||
+        rank >= STATUS_INDEX.CONSENSUS,
+      label:
+        status === 'EVALUATION_FAILED'
+          ? 'Evaluation failed (fail-closed)'
+          : status === 'INCONCLUSIVE'
+            ? 'Evaluation incomplete → INCONCLUSIVE'
+            : status === 'DISPUTED'
+              ? 'Evaluator disagreement → DISPUTED'
+              : status === 'CONSENSUS' || input.hasVerdict
+                ? 'Independent evaluators + adversarial review completed'
+                : 'Nondeterministic evaluation pending',
+    },
+    {
+      done:
+        status === 'CONSENSUS' || input.hasVerdict || rank >= STATUS_INDEX.CONSENSUS,
+      label:
+        input.consensusCount > 0
+          ? `Validator-consensus evaluation recorded (${input.consensusCount} evaluators)`
+          : 'Consensus evaluation',
     },
     {
       done: input.hasVerdict,
-      label: input.verdictLabel ? `Verdict finalized: ${input.verdictLabel}` : 'Verdict finalized',
+      label: input.verdictLabel ? `Verdict finalized: ${input.verdictLabel}` : 'Verdict finalized (derived, not caller-supplied)',
       time: input.verdictTime ? formatTime(input.verdictTime) : undefined,
     },
-    { done: rank >= PHASE.settlement, label: 'Settlement executed' },
-    { done: rank >= PHASE.closed, label: 'Dispute closed' },
+    { done: rank >= STATUS_INDEX.SETTLEMENT || status === 'CLOSED', label: 'Settlement executed' },
+    { done: status === 'CLOSED', label: 'Dispute closed' },
   ];
 
   const firstPending = steps.findIndex((s) => !s.done);

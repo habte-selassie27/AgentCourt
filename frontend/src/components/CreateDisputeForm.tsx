@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { getCourt } from '../sdk';
 import { parseEther, isHexString, ZeroHash } from 'ethers';
 
@@ -14,6 +14,17 @@ const EVIDENCE_TYPES = [
   { value: 'SIGNED_MESSAGE', label: 'Signed Message' },
   { value: 'CONTENT_HASH', label: 'Content Hash' },
   { value: 'CUSTOM', label: 'Custom' },
+];
+
+const CLAIM_TYPES = [
+  { value: 'DELIVERY_FAILURE', label: 'Delivery Failure' },
+  { value: 'PAYMENT_FAILURE', label: 'Payment Failure' },
+  { value: 'PERFORMANCE_FAILURE', label: 'Performance Failure' },
+  { value: 'DATA_QUALITY', label: 'Data Quality' },
+  { value: 'MARKETPLACE_VIOLATION', label: 'Marketplace Violation' },
+  { value: 'AGENT_CONTRACT_BREACH', label: 'Agent Contract Breach' },
+  { value: 'ORACLE_MALFUNCTION', label: 'Oracle Malfunction' },
+  { value: 'ESCROW_DISPUTE', label: 'Escrow Dispute' },
 ];
 
 interface EvidenceDraft {
@@ -32,6 +43,16 @@ function emptyEvidence(): EvidenceDraft {
     contentHash: '',
     description: '',
   };
+}
+
+function toDatetimeLocal(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function isValidAddress(addr: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(addr.trim());
 }
 
 const labelStyle = {
@@ -53,20 +74,49 @@ const fieldStyle = {
 
 const monoFieldStyle = { ...fieldStyle, fontFamily: 'monospace' } as const;
 
+const errorBannerStyle = {
+  background: 'rgba(239,68,68,0.1)',
+  border: '1px solid rgba(239,68,68,0.3)',
+  borderRadius: '8px',
+  padding: '0.75rem 1rem',
+  marginBottom: '1rem',
+  color: '#fca5a5',
+  fontSize: '0.9rem',
+} as const;
+
+const successBannerStyle = {
+  background: 'rgba(34,197,94,0.1)',
+  border: '1px solid rgba(34,197,94,0.3)',
+  borderRadius: '8px',
+  padding: '0.75rem 1rem',
+  marginBottom: '1rem',
+  color: '#86efac',
+  fontSize: '0.9rem',
+} as const;
+
 export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProps) {
+  const defaultDeadline = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    d.setHours(23, 59, 0, 0);
+    return toDatetimeLocal(d.getTime());
+  }, []);
+
   const [respondent, setRespondent] = useState('');
   const [agreementHash, setAgreementHash] = useState('');
   const [claimType, setClaimType] = useState('DELIVERY_FAILURE');
   const [description, setDescription] = useState('');
   const [stake, setStake] = useState('');
-  const [deadline, setDeadline] = useState('');
+  const [deadline, setDeadline] = useState(defaultDeadline);
   const [evidence, setEvidence] = useState<EvidenceDraft[]>([emptyEvidence()]);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
-  // Set when the dispute exists on-chain but one or more evidence items failed,
-  // so the id is not lost behind an error message.
+  const [success, setSuccess] = useState('');
   const [createdId, setCreatedId] = useState<bigint | null>(null);
+
+  const descriptionLength = description.length;
+  const respondentValid = respondent.trim() === '' || isValidAddress(respondent);
 
   const updateEvidence = (index: number, patch: Partial<EvidenceDraft>) => {
     setEvidence((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -75,6 +125,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setCreatedId(null);
     setSubmitting(true);
     setProgress('');
@@ -82,12 +133,25 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     try {
       const court = getCourt();
       if (!court.getSigner()) {
-        setError('Please connect your wallet first');
+        setError('Please connect your wallet first.');
         return;
       }
 
-      // Validate every evidence item before spending a transaction on the
-      // dispute, so a typo cannot create a dispute whose evidence never lands.
+      if (!respondent.trim()) {
+        setError('Respondent address is required.');
+        return;
+      }
+
+      if (!isValidAddress(respondent)) {
+        setError('Respondent must be a valid Ethereum address (0x followed by 40 hex characters).');
+        return;
+      }
+
+      if (!description.trim()) {
+        setError('Description is required.');
+        return;
+      }
+
       const prepared: EvidenceDraft[] = [];
       for (const [i, item] of evidence.entries()) {
         const source = item.source.trim();
@@ -114,21 +178,37 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         });
       }
 
+      if (!deadline) {
+        setError('Deadline is required.');
+        return;
+      }
+
       const deadlineTs = BigInt(Math.floor(new Date(deadline).getTime() / 1000));
+      if (deadlineTs <= BigInt(Math.floor(Date.now() / 1000))) {
+        setError('Deadline must be in the future.');
+        return;
+      }
+
+      const stakeNum = parseFloat(stake || '0.001');
+      if (isNaN(stakeNum) || stakeNum <= 0) {
+        setError('Stake must be a positive number.');
+        return;
+      }
+
       const stakeWei = parseEther(stake || '0.001');
       const agreementHashBytes = '0x' + (agreementHash || generateHash()).padStart(64, '0');
 
+      setProgress('Creating dispute...');
+
       const disputeId = await court.createDispute({
-        respondent: respondent as `0x${string}`,
+        respondent: respondent.trim() as `0x${string}`,
         agreementHash: agreementHashBytes as `0x${string}`,
         claimType,
-        description,
+        description: description.trim(),
         stake: stakeWei,
         deadline: deadlineTs,
       });
 
-      // Attach the evidence immediately; the dispute opens in
-      // EVIDENCE_COLLECTION, so a dispute created without it would be empty.
       let submitted = 0;
       const failures: string[] = [];
 
@@ -158,7 +238,8 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         return;
       }
 
-      onCreated(disputeId);
+      setCreatedId(disputeId);
+      setSuccess(`Dispute #${disputeId} created successfully with all ${submitted} evidence items.`);
     } catch (err: any) {
       console.error('Create dispute failed:', err);
       setError(err.message || 'Transaction failed. Check console for details.');
@@ -172,8 +253,16 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
   }
 
+  function dismissError() {
+    setError('');
+  }
+
+  function dismissSuccess() {
+    setSuccess('');
+  }
+
   return (
-    <div className="create-form">
+    <div className="create-form" style={{ maxWidth: 700 }}>
       <div className="section-header">
         <h2>Create Dispute</h2>
         <button className="btn btn-secondary" onClick={onCancel}>
@@ -182,48 +271,98 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       </div>
 
       {error && (
-        <div style={{
-          background: '#3d0000',
-          border: '1px solid #ef4444',
-          borderRadius: '8px',
-          padding: '0.75rem 1rem',
-          marginBottom: '1rem',
-          color: '#fca5a5',
-          fontSize: '0.9rem',
-        }}>
-          {error}
+        <div style={errorBannerStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>{error}</div>
+            <button
+              type="button"
+              onClick={dismissError}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#fca5a5',
+                cursor: 'pointer',
+                fontSize: '1.1rem',
+                padding: '0 0 0 0.5rem',
+                lineHeight: 1,
+              }}
+              aria-label="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {success && (
+        <div style={successBannerStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>{success}</div>
+            <button
+              type="button"
+              onClick={dismissSuccess}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#86efac',
+                cursor: 'pointer',
+                fontSize: '1.1rem',
+                padding: '0 0 0 0.5rem',
+                lineHeight: 1,
+              }}
+              aria-label="Dismiss success"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 
       {createdId !== null && (
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => onCreated(createdId)}
-          style={{ marginBottom: '1rem' }}
-        >
-          View dispute #{createdId.toString()}
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => onCreated(createdId)}
+          >
+            View dispute #{createdId.toString()}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onCancel}
+          >
+            Back to Dashboard
+          </button>
+        </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ maxWidth: 600 }}>
-        <div style={{ marginBottom: '1rem' }}>
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: '1.25rem' }}>
           <label style={labelStyle}>
-            Respondent Address
+            Respondent Address <span style={{ color: 'var(--danger)' }}>*</span>
           </label>
           <input
             type="text"
             value={respondent}
             onChange={(e) => setRespondent(e.target.value)}
-            placeholder="0x..."
+            placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD38"
             required
-            style={monoFieldStyle}
+            style={{
+              ...monoFieldStyle,
+              borderColor: respondent && !respondentValid ? 'var(--danger)' : 'var(--border)',
+            }}
           />
+          {respondent && !respondentValid && (
+            <p style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '0.35rem' }}>
+              Must be a valid 0x-prefixed 40-character hex address.
+            </p>
+          )}
         </div>
 
-        <div style={{ marginBottom: '1rem' }}>
+        <div style={{ marginBottom: '1.25rem' }}>
           <label style={labelStyle}>
-            Agreement Hash (optional — auto-generated if empty)
+            Agreement Hash <span style={{ color: 'var(--text-secondary)', fontWeight: 'normal' }}>(optional — auto-generated if empty)</span>
           </label>
           <input
             type="text"
@@ -234,41 +373,51 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           />
         </div>
 
-        <div style={{ marginBottom: '1rem' }}>
+        <div style={{ marginBottom: '1.25rem' }}>
           <label style={labelStyle}>
-            Claim Type
+            Claim Type <span style={{ color: 'var(--danger)' }}>*</span>
           </label>
           <select
             value={claimType}
             onChange={(e) => setClaimType(e.target.value)}
             style={fieldStyle}
           >
-            <option value="DELIVERY_FAILURE">Delivery Failure</option>
-            <option value="PAYMENT_FAILURE">Payment Failure</option>
-            <option value="PERFORMANCE_FAILURE">Performance Failure</option>
-            <option value="DATA_QUALITY">Data Quality</option>
-            <option value="MARKETPLACE_VIOLATION">Marketplace Violation</option>
-            <option value="AGENT_CONTRACT_BREACH">Agent Contract Breach</option>
-            <option value="ORACLE_MALFUNCTION">Oracle Malfunction</option>
-            <option value="ESCROW_DISPUTE">Escrow Dispute</option>
+            {CLAIM_TYPES.map((ct) => (
+              <option key={ct.value} value={ct.value}>{ct.label}</option>
+            ))}
           </select>
         </div>
 
-        <div style={{ marginBottom: '1rem' }}>
+        <div style={{ marginBottom: '1.25rem' }}>
           <label style={labelStyle}>
-            Description
+            Description <span style={{ color: 'var(--danger)' }}>*</span>
           </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Describe the dispute..."
+            placeholder="Describe the dispute — what was agreed, what happened, and why you are filing a claim..."
             required
             rows={4}
-            style={{ ...fieldStyle, resize: 'vertical' }}
+            style={{
+              ...fieldStyle,
+              resize: 'vertical',
+              borderColor: description.trim() === '' && description !== '' ? 'var(--danger)' : 'var(--border)',
+            }}
           />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem' }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+              Explain the agreement and the breach.
+            </span>
+            <span style={{
+              color: descriptionLength > 500 ? 'var(--warning)' : 'var(--text-secondary)',
+              fontSize: '0.75rem',
+            }}>
+              {descriptionLength}/500
+            </span>
+          </div>
         </div>
 
-        <div style={{ marginBottom: '1rem' }}>
+        <div style={{ marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <label style={{ ...labelStyle, marginBottom: 0 }}>
               Evidence ({evidence.length})
@@ -279,7 +428,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
               onClick={() => setEvidence((prev) => [...prev, emptyEvidence()])}
               style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
             >
-              Add Evidence
+              + Add Evidence
             </button>
           </div>
 
@@ -335,7 +484,9 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Source</label>
+                  <label style={labelStyle}>
+                    Source <span style={{ color: 'var(--danger)' }}>*</span>
+                  </label>
                   <input
                     type="text"
                     value={item.source}
@@ -347,7 +498,9 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
               </div>
 
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={labelStyle}>Reference</label>
+                <label style={labelStyle}>
+                  Reference <span style={{ color: 'var(--danger)' }}>*</span>
+                </label>
                 <input
                   type="text"
                   value={item.refUri}
@@ -383,31 +536,38 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           ))}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
           <div>
             <label style={labelStyle}>
-              Stake (GEN)
+              Stake (GEN) <span style={{ color: 'var(--danger)' }}>*</span>
             </label>
             <input
               type="number"
               step="0.001"
+              min="0.001"
               value={stake}
               onChange={(e) => setStake(e.target.value)}
               placeholder="0.001"
               required
               style={fieldStyle}
             />
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
+              Minimum: 0.001 GEN
+            </span>
           </div>
           <div>
             <label style={labelStyle}>
-              Deadline
+              Deadline <span style={{ color: 'var(--danger)' }}>*</span>
             </label>
             <input
               type="datetime-local"
               value={deadline}
               onChange={(e) => setDeadline(e.target.value)}
               required
-              style={fieldStyle}
+              style={{
+                ...fieldStyle,
+                colorScheme: 'dark',
+              }}
             />
           </div>
         </div>
@@ -416,11 +576,35 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           type="submit"
           className="btn btn-primary"
           disabled={submitting}
-          style={{ width: '100%', padding: '0.75rem', fontSize: '1rem' }}
+          style={{
+            width: '100%',
+            padding: '0.75rem',
+            fontSize: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.5rem',
+            opacity: submitting ? 0.8 : 1,
+          }}
         >
+          {submitting && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: '16px',
+                height: '16px',
+                border: '2px solid rgba(255,255,255,0.3)',
+                borderTopColor: 'white',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+              }}
+            />
+          )}
           {progress || (submitting ? 'Creating Dispute...' : 'Create Dispute')}
         </button>
       </form>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

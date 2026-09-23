@@ -9,12 +9,11 @@
     "preview": "vite preview --config frontend/vite.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "contracts:build": "forge build",
-    "contracts:test": "forge test -vvv"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "ethers": "^6.17.0",
+    "genlayer-js": "^1.1.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

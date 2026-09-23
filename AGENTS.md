@@ -1796,18 +1796,12 @@ Exact economics should be configured by the integrating application.
 
 # Smart Contract Architecture
 
-A production implementation can be organized around modular contracts.
-
-Conceptual modules:
+AgentCourt is implemented exclusively as GenLayer Intelligent Contracts (Python).
+There is no Solidity path. Conceptual modules map to two deployed ICs:
 
 ```text
-AgentCourtCore
-DisputeRegistry
-EvidenceRegistry
-VerdictRegistry
-AppealManager
-SettlementAdapter
-AccessController
+AgentCourtCore          (disputes, evidence, evaluation, verdicts)
+ResolutionManager       (settlement, appeals — reads core verdict)
 ```
 
 ---
@@ -1818,112 +1812,70 @@ Responsible for:
 
 ```text
 creating disputes
+submitting evidence
 starting investigations
-tracking state
-finalizing verdicts
+running nondeterministic evaluation under gl.vm.run_nondet_unsafe
+running 4 LLM evaluator roles + adversarial review via gl.nondet.exec_prompt
+finalizing verdicts from the stored evaluation (dispute_id only)
+emitting settlement / appeal intents to ResolutionManager
 ```
 
----
-
-# DisputeRegistry
-
-Stores:
+State held in core:
 
 ```text
 dispute metadata
 participants
-status
-deadlines
-stake references
+status (incl. EVALUATION_PENDING/FAILED, INCONCLUSIVE, DISPUTED)
+evidence records + linkage
+evaluation payloads (evaluators, adversarial, consensus)
+final verdicts (verdict, confidence, resolution, reviewRequired)
 ```
 
 ---
 
-# EvidenceRegistry
+# ResolutionManager
 
-Stores:
-
-```text
-evidence identifiers
-hashes
-references
-submitters
-timestamps
-```
-
----
-
-# VerdictRegistry
-
-Stores:
+Settlement and appeal authority. Callers never supply verdicts:
 
 ```text
-final verdict
-confidence
-evidence root
-reasoning commitment
-settlement action
+set_core (one-time owner wiring)
+execute_settlement(dispute_id)   → core.view().get_verdict() only
+open_appeal (core-only)          → captures verdict version
+resolve_appeal(appeal_id)        → compares core verdict versions
+is_settled / get_settlement views
 ```
 
----
-
-# AppealManager
-
-Handles:
-
-```text
-appeal requests
-appeal bonds
-review deadlines
-superseding verdicts
-```
-
----
-
-# SettlementAdapter
-
-Connects AgentCourt to external applications.
-
-Possible actions:
-
-```text
-RELEASE
-REFUND
-SPLIT
-FREEZE
-SLASH
-REVIEW
-```
+Fail-closed: settlement refuses when `reviewRequired` is true.
 
 ---
 
 # Repository Structure
 
-A suggested repository structure:
+Actual repository structure:
 
 ```text
 agentcourt/
-├── contracts/
-│   ├── AgentCourtCore
-│   ├── DisputeRegistry
-│   ├── EvidenceRegistry
-│   ├── VerdictRegistry
-│   ├── AppealManager
-│   └── SettlementAdapter
-│
 ├── intelligent-contracts/
-│   ├── dispute_judge.py
-│   ├── evidence_verifier.py
-│   ├── adversarial_reviewer.py
-│   └── consensus_engine.py
+│   ├── core/agentcourt_core.py
+│   └── registry/resolution_manager.py
 │
-├── src/
+├── frontend/src/
+│   ├── sdk/           (genlayer-js client + AgentCourt SDK)
+│   ├── components/
 │   ├── dispute/
-│   ├── evidence/
 │   ├── verdict/
-│   ├── settlement/
-│   └── sdk/
+│   └── evidence/
 │
+├── tests/
+│   ├── unit/test_genlayer_workflow.py
+│   ├── genlayer_stub.py
+│   └── sdk.agentcourt.test.ts
+│
+├── docs/
+├── AUDIT.md
+├── ARCHITECTURE.md
+└── AGENTS.md
+```
 ├── tests/
 │   ├── unit/
 │   ├── integration/
@@ -1935,9 +1887,11 @@ agentcourt/
 │   └── verification/
 │
 ├── docs/
-│   ├── architecture/
-│   ├── security/
-│   └── integrations/
+│   ├── PROTOCOL.md
+│   ├── DEVELOPER_GUIDE.md
+│   ├── OPERATIONS.md
+│   ├── SECURITY_PRIVACY.md
+│   └── PRODUCT.md
 │
 ├── frontend/
 │
@@ -1961,9 +1915,7 @@ Intelligent Contracts
 TypeScript
 React
 Vite / Next.js
-EVM-compatible tooling
 JSON-RPC
-Foundry
 Vitest
 Docker
 ```

@@ -16,8 +16,11 @@ jobs:
           python-version: '3.12'
       - run: pip install genvm-linter
       - run: genvm-lint check intelligent-contracts/core/agentcourt_core.py
-      - run: genvm-lint check intelligent-contracts/registry/dispute_registry.py
+        env:
+          GENVM_VERSION: v0.3.0-rc7
       - run: genvm-lint check intelligent-contracts/registry/resolution_manager.py
+        env:
+          GENVM_VERSION: v0.3.0-rc7
 
   test:
     runs-on: ubuntu-latest

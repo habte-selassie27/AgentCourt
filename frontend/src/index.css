@@ -150,7 +150,13 @@ body {
 .status-ADVERSARIAL_REVIEW { background: rgba(239,68,68,0.2); color: var(--danger); }
 .status-CONSENSUS { background: rgba(99,102,241,0.2); color: var(--accent); }
 .status-VERDICT { background: rgba(34,197,94,0.2); color: var(--success); }
+.status-SETTLEMENT { background: rgba(99,102,241,0.2); color: var(--accent); }
 .status-CLOSED { background: rgba(136,136,160,0.2); color: var(--text-secondary); }
+.status-APPEALED { background: rgba(234,179,8,0.25); color: var(--warning); }
+.status-EVALUATION_PENDING { background: rgba(59,130,246,0.2); color: var(--info); }
+.status-EVALUATION_FAILED { background: rgba(239,68,68,0.2); color: var(--danger); }
+.status-INCONCLUSIVE { background: rgba(234,179,8,0.2); color: var(--warning); }
+.status-DISPUTED { background: rgba(239,68,68,0.25); color: var(--danger); }
 .dispute-meta { display: flex; gap: 2rem; font-size: 0.85rem; color: var(--text-secondary); }
 .dispute-description { margin-top: 0.75rem; color: var(--text-secondary); font-size: 0.9rem; }
 
@@ -530,7 +536,7 @@ body {
 .error-panel-actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
 
 /* Form */
-.create-form { max-width: 600px; }
+.create-form { max-width: 700px; }
 .create-form label {
   display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.85rem;
 }
@@ -545,6 +551,20 @@ body {
 .create-form select:focus,
 .create-form textarea:focus { outline: none; border-color: var(--accent); }
 .create-form textarea { resize: vertical; }
+
+/* Dark datetime picker */
+.create-form input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+.create-form input[type="number"]::-webkit-inner-spin-button,
+.create-form input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 @media (max-width: 768px) {
   .adversarial-stats { grid-template-columns: 1fr; }

@@ -9,7 +9,11 @@ export type DisputeStatus =
   | 'VERDICT'
   | 'SETTLEMENT'
   | 'CLOSED'
-  | 'APPEALED';
+  | 'APPEALED'
+  | 'EVALUATION_PENDING'
+  | 'EVALUATION_FAILED'
+  | 'INCONCLUSIVE'
+  | 'DISPUTED';
 
 export type Verdict =
   | 'NONE'

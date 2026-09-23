@@ -15,9 +15,12 @@
 
 ## Testing
 
-- Python unit tests: `pytest tests/unit/ -v`
-- TypeScript tests: `npm test`
-- Integration tests: `gltest tests/integration/ -v -s`
+- Python acceptance tests (IC workflow + caller isolation): `pytest tests/unit/ -v`
+- Frontend domain tests: `npm test`
+- Smart-contract lint: `genvm-lint check intelligent-contracts/core/agentcourt_core.py` and `.../registry/resolution_manager.py`
+- Typecheck + build: `npm run typecheck && npm run build`
+
+There is no Solidity/Foundry test path — only Python Intelligent Contracts.
 
 ## Pull Request Process
 
