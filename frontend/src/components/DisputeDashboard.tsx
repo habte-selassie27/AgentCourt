@@ -114,11 +114,9 @@ export function DisputeDashboard({ onViewDispute }: DisputeDashboardProps) {
               </details>
             )}
             <div className="error-panel-actions">
-              {friendly.retryable && (
-                <button className="btn btn-secondary" onClick={() => void load()} disabled={loading}>
-                  {loading ? 'Retrying…' : 'Try again'}
-                </button>
-              )}
+              <button className="btn btn-secondary" onClick={() => void load()} disabled={loading}>
+                {loading ? 'Retrying…' : 'Try again'}
+              </button>
               <a
                 className="btn btn-secondary"
                 href="https://explorer-studio.genlayer.com"
