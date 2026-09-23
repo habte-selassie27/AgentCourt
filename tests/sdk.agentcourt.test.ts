@@ -8,7 +8,7 @@ import {
 } from '../frontend/src/dispute';
 import { VERDICTS, confidencePercent } from '../frontend/src/verdict';
 import { describeError } from '../frontend/src/sdk/errors';
-import { TransactionPendingError } from '../frontend/src/sdk/genlayer';
+import { isTransientRpcWaitError, TransactionPendingError } from '../frontend/src/sdk/genlayer';
 
 describe('dispute domain', () => {
   it('includes evaluation fail-closed statuses', () => {
@@ -107,5 +107,48 @@ describe('describeError', () => {
     const friendly = describeError(new Error(corsMsg));
     expect(friendly.title).toBe('RPC briefly unreachable');
     expect(friendly.retryable).toBe(true);
+  });
+
+  it('classifies the exact console failure as temporary RPC errors', () => {
+    // Real error pair from the browser console during Request Evaluation:
+    // POST https://studio.genlayer.com/api net::ERR_FAILED 502 (Bad Gateway)
+    const friendly = describeError(
+      new Error('GenLayer RPC error (eth_getTransactionByHash): Failed to fetch'),
+    );
+    expect(friendly.title).toBe('RPC briefly unreachable');
+    expect(friendly.retryable).toBe(true);
+  });
+});
+
+describe('isTransientRpcWaitError', () => {
+  it('treats the console CORS/502 pair as transient', () => {
+    expect(
+      isTransientRpcWaitError(
+        'GenLayer RPC error (eth_getTransactionByHash): Failed to fetch',
+      ),
+    ).toBe(true);
+    expect(
+      isTransientRpcWaitError(
+        'POST https://studio.genlayer.com/api net::ERR_FAILED 502 (Bad Gateway)',
+      ),
+    ).toBe(true);
+  });
+
+  it('treats indexing lag right after submission as transient', () => {
+    expect(isTransientRpcWaitError('Transaction not found: 0xabc')).toBe(true);
+  });
+
+  it('does NOT treat wait-budget expiry as transient', () => {
+    // The SDK's definitive timeout: waiting longer is pointless, it means the
+    // tx genuinely needs more time (→ TransactionPendingError path).
+    expect(
+      isTransientRpcWaitError(
+        'Timed out waiting for transaction 0xabc to reach status "FINALIZED" (current status: 1).',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not classify execution failures as transient', () => {
+    expect(isTransientRpcWaitError('The on-chain contract failed while running "request_evaluation".')).toBe(false);
   });
 });

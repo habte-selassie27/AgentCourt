@@ -51,6 +51,22 @@ export class TransactionPendingError extends Error {
   }
 }
 
+/**
+ * True for transient RPC failures that can occur mid-poll while a long-running
+ * transaction (e.g. request_evaluation) is still processing: gateway blips,
+ * 502/503/504s that Chrome reports as CORS "Failed to fetch", and short
+ * indexing lag right after submission ("Transaction not found").
+ *
+ * The SDK's own "Timed out waiting for transaction" is deliberately NOT
+ * transient — it means the wait budget genuinely expired.
+ */
+export function isTransientRpcWaitError(message: string): boolean {
+  if (/Timed out waiting for transaction/i.test(message)) return false;
+  return /fetch|network|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|failed to fetch|502|503|504|Bad Gateway|CORS|ERR_FAILED|Transaction not found/i.test(
+    message,
+  );
+}
+
 export interface GenCallResult<T = unknown> {
   ok: boolean;
   data?: T;
@@ -195,12 +211,62 @@ export class GenLayerClient {
     }
   }
 
+  /** See isTransientRpcWaitError — transient failures are retryable during a wait. */
+  private isTransientRpcError(message: string): boolean {
+    return isTransientRpcWaitError(message);
+  }
+
+  /**
+   * Wait for a transaction to reach FINALIZED while tolerating transient RPC
+   * failures (studionet's gateway intermittently answers 502; Chrome surfaces
+   * those as CORS "Failed to fetch" errors mid-poll).
+   *
+   * The underlying genlayer-js wait aborts on the first such error, so we wrap
+   * it and keep spending the remaining budget. `totalRetries` is expressed in
+   * polls of `intervalMs` (default 3s), matching the old waitRetries semantics.
+   */
+  private async waitForFinalizedReceipt(
+    hash: string,
+    totalRetries: number,
+    intervalMs: number,
+  ): Promise<unknown> {
+    const CHUNK = 60; // per-attempt SDK budget ≈ 3 min at 3s interval
+    let waited = 0;
+    while (waited < totalRetries) {
+      const budget = Math.min(CHUNK, totalRetries - waited);
+      waited += budget;
+      try {
+        return await this.client.waitForTransactionReceipt({
+          hash: hash as `0x${string}`,
+          status: TransactionStatus.FINALIZED,
+          interval: intervalMs,
+          retries: budget,
+        } as any);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/Timed out waiting for transaction/i.test(message)) {
+          // Full budget elapsed without an RPC failure — tx genuinely needs more time.
+          continue;
+        }
+        if (!this.isTransientRpcError(message)) {
+          throw err;
+        }
+        // RPC blip — pause briefly, then keep waiting with the remaining budget.
+        await new Promise((r) => setTimeout(r, 2_000));
+      }
+    }
+    throw new Error(
+      `Timed out waiting for transaction ${hash} to reach status "FINALIZED".`,
+    );
+  }
+
   /**
    * Write through genlayer-js (NOT ethers/eth_call).
    * Returns the transaction hash; waits for FINALIZED and checks execution result.
    *
    * Default wait ≈ 3 minutes. request_evaluation (LLM + consensus) passes a much
-   * longer budget — genlayer-js defaults to only 10×3s.
+   * longer budget — genlayer-js defaults to only 10×3s. The wait itself survives
+   * transient RPC blips instead of failing the write after the tx was submitted.
    */
   async genWrite(
     to: string,
@@ -225,34 +291,34 @@ export class GenLayerClient {
 
     let receipt: unknown;
     try {
-      receipt = await this.client.waitForTransactionReceipt({
-        hash,
-        status: TransactionStatus.FINALIZED,
-        interval,
-        retries,
-      } as any);
+      receipt = await this.waitForFinalizedReceipt(String(hash), retries, interval);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      if (/Timed out waiting for transaction/i.test(message)) {
-        const current = await this.safeGetStatus(String(hash));
-        if (current !== null && current !== 'FINALIZED' && current !== '7') {
-          // Submitted and still progressing — not a failure.
-          throw new TransactionPendingError(String(hash), current);
-        }
-        // Finalized (or unknown status) between polls — fall through to re-check once.
-        receipt = await this.client
-          .waitForTransactionReceipt({
-            hash,
-            status: TransactionStatus.FINALIZED,
-            interval: 1_000,
-            retries: 5,
-          } as any)
-          .catch(() => null);
-        if (!receipt) {
-          throw new TransactionPendingError(String(hash), current ?? 'unknown');
-        }
-      } else {
+      if (!/Timed out waiting for transaction/i.test(message)) {
         throw err;
+      }
+      // All wait budgets are spent. Decide: still progressing → pending, not failure.
+      const current = await this.safeGetStatus(String(hash));
+      if (current !== null && current !== 'FINALIZED' && current !== '7') {
+        // Submitted and still progressing — not a failure.
+        throw new TransactionPendingError(String(hash), current);
+      }
+      // Finalized (or unknown status) between polls — fall through to re-check once.
+      receipt = await this.client
+        .waitForTransactionReceipt({
+          hash,
+          status: TransactionStatus.FINALIZED,
+          interval: 1_000,
+          retries: 5,
+        } as any)
+        .catch(() => null);
+      if (!receipt) {
+        if (current === 'FINALIZED' || current === '7') {
+          // Node reports FINALIZED even though the receipt re-check failed;
+          // execution-result inspection is best-effort, so treat as done.
+          return String(hash);
+        }
+        throw new TransactionPendingError(String(hash), current ?? 'unknown');
       }
     }
 
@@ -274,14 +340,20 @@ export class GenLayerClient {
     return String(hash);
   }
 
-  private async safeGetStatus(hash: string): Promise<string | null> {
-    try {
-      const tx = (await this.client.getTransaction({ hash } as any)) as any;
-      const name = tx?.statusName ?? tx?.status;
-      return name === undefined || name === null ? null : String(name);
-    } catch {
-      return null;
+  /** Status lookup with a few retries — this call itself can hit RPC blips. */
+  private async safeGetStatus(hash: string, attempts = 3): Promise<string | null> {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const tx = (await this.client.getTransaction({ hash } as any)) as any;
+        const name = tx?.statusName ?? tx?.status;
+        return name === undefined || name === null ? null : String(name);
+      } catch {
+        if (i < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 1_500));
+        }
+      }
     }
+    return null;
   }
 }
 
