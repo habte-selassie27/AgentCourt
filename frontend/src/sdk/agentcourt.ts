@@ -451,6 +451,8 @@ export class AgentCourt {
     stake: bigint;
     deadline: bigint;
   }): Promise<bigint> {
+    const before = await this.getDisputeCount();
+    // Stake is metadata only — do not attach value (avoids locking GEN / non-payable failures).
     await this.writeCore(
       'create_dispute',
       [
@@ -461,9 +463,16 @@ export class AgentCourt {
         Number(params.stake),
         Number(params.deadline),
       ],
-      params.stake,
+      BigInt(0),
     );
-    return this.getDisputeCount();
+    const after = await this.getDisputeCount();
+    if (after !== before + BigInt(1)) {
+      throw new ContractExecutionError(
+        'create_dispute',
+        `Dispute count did not increase (before=${before}, after=${after}).`,
+      );
+    }
+    return after;
   }
 
   async submitEvidence(params: {

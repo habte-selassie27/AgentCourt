@@ -22,7 +22,11 @@ export class ContractExecutionError extends Error {
   readonly method: string;
   readonly detail: string;
   constructor(method: string, detail: string) {
-    super(`The on-chain contract failed while running "${method}".`);
+    super(
+      detail
+        ? `The on-chain contract failed while running "${method}": ${detail}`
+        : `The on-chain contract failed while running "${method}".`,
+    );
     this.name = 'ContractExecutionError';
     this.method = method;
     this.detail = detail;
@@ -126,6 +130,36 @@ export class GenLayerClient {
     }
   }
 
+  /** Raise if the finalized leader receipt reports a contract error / rollback. */
+  private assertLeaderReceiptOk(receipt: unknown, method: string): void {
+    const leaders = (receipt as any)?.consensus_data?.leader_receipt;
+    if (!Array.isArray(leaders)) return;
+
+    for (const leader of leaders) {
+      if (!leader || typeof leader !== 'object') continue;
+      const result = leader.result;
+      if (result && typeof result === 'object') {
+        const status = String((result as any).status ?? '');
+        const payload = String((result as any).payload ?? '');
+        if (
+          status === 'contract_error' ||
+          status === 'rollback' ||
+          status === 'error' ||
+          /exit_code\s+\d+/i.test(payload) ||
+          /rollback|contract_error/i.test(status)
+        ) {
+          throw new ContractExecutionError(method, payload || status);
+        }
+      }
+
+      // Some nodes expose only a textual execution_result.
+      const exec = String((leader as any)?.execution_result ?? '');
+      if (exec && exec !== 'FINISHED_WITH_RETURN' && /error|exit_code|rollback/i.test(exec)) {
+        throw new ContractExecutionError(method, exec);
+      }
+    }
+  }
+
   /**
    * Write through genlayer-js (NOT ethers/eth_call).
    * Returns the transaction hash; waits for FINALIZED and checks execution result.
@@ -152,6 +186,7 @@ export class GenLayerClient {
       status: TransactionStatus.FINALIZED,
     } as any);
 
+    // Preferred: explicit execution result when the node provides it.
     const execName = (receipt as any)?.txExecutionResultName;
     if (
       execName !== undefined &&
@@ -161,6 +196,10 @@ export class GenLayerClient {
     ) {
       throw new ContractExecutionError(method, String(execName));
     }
+
+    // Studionet often omits txExecutionResult. Fall back to leader receipt:
+    // { status: 'contract_error' | 'rollback', payload: 'exit_code 1' | 'Dispute not found' }.
+    this.assertLeaderReceiptOk(receipt, method);
 
     return String(hash);
   }

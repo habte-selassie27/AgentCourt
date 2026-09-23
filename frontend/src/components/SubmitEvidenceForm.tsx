@@ -40,7 +40,18 @@ export function SubmitEvidenceForm({ disputeId, onSubmitted, onCancel }: SubmitE
         return;
       }
 
-      const hash = contentHash || ('0x' + crypto.randomUUID().replace(/-/g, '').slice(0, 64));
+      let hash = contentHash.trim();
+      if (hash) {
+        const hex = hash.replace(/^0x/i, '');
+        if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+          setError('Content hash must be 32 bytes of hex (0x optional, 64 hex chars).');
+          setSubmitting(false);
+          return;
+        }
+        hash = '0x' + hex;
+      } else {
+        hash = '0x' + crypto.randomUUID().replace(/-/g, '').slice(0, 64).padEnd(64, '0');
+      }
 
       await court.submitEvidence({
         disputeId,

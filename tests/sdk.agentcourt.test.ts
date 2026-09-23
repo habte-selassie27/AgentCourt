@@ -42,3 +42,33 @@ describe('verdict domain', () => {
     expect(confidencePercent(10000n)).toBe(100);
   });
 });
+
+describe('bytes32 hash normalization', () => {
+  function toBytes32(input: string, fallback: () => string): string {
+    const trimmed = input.trim();
+    if (!trimmed) return '0x' + fallback().replace(/^0x/i, '').padStart(64, '0').slice(0, 64);
+    const hex = trimmed.replace(/^0x/i, '');
+    if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length > 64) {
+      throw new Error('Hash must be hex (0x optional) and at most 32 bytes.');
+    }
+    return '0x' + hex.padStart(64, '0');
+  }
+
+  it('strips a single 0x and never produces 0x0x', () => {
+    const h = '0x' + 'ab'.repeat(32);
+    const out = toBytes32(h, () => 'ff');
+    expect(out.startsWith('0x0x')).toBe(false);
+    expect(out).toBe(h);
+    expect(out).toHaveLength(66);
+  });
+
+  it('accepts unprefixed hex and pads short hashes', () => {
+    expect(toBytes32('5d46', () => 'x')).toBe('0x' + '0'.repeat(60) + '5d46');
+  });
+
+  it('rejects double-prefixed and non-hex input', () => {
+    expect(() => toBytes32('0x0xab', () => 'x')).toThrow();
+    expect(() => toBytes32('zzzz', () => 'x')).toThrow();
+    expect(() => toBytes32('0x' + 'aa'.repeat(33), () => 'x')).toThrow();
+  });
+});

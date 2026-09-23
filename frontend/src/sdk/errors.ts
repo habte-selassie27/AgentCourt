@@ -19,13 +19,14 @@ export function describeError(err: unknown): FriendlyError {
   const message = e.message ?? String(err ?? 'Unknown error');
 
   // Contract execution failure (raised by genlayer.ts / read path)
-  if (e.name === 'ContractExecutionError' || /contract execution failed/i.test(message)) {
+  if (e.name === 'ContractExecutionError' || /contract execution failed|on-chain contract failed/i.test(message)) {
+    const detail = e.detail ?? message;
     return {
-      title: 'The court contracts are temporarily unavailable',
+      title: 'On-chain transaction failed',
       hint:
-        'The deployed Intelligent Contracts failed to execute on GenLayer Studionet. ' +
-        'This is a contract-side issue (likely a runtime version mismatch) — nothing is wrong with your setup.',
-      detail: e.detail ?? message,
+        'The Intelligent Contract rejected this write on GenLayer Studionet. ' +
+        'The form draft was kept — fix the highlighted field and try again.',
+      detail,
       retryable: true,
     };
   }

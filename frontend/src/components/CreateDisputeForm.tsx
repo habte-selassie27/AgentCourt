@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { getCourt } from '../sdk';
-import { parseEther, isHexString, ZeroHash } from 'ethers';
+import { parseEther, ZeroHash } from 'ethers';
 
 interface CreateDisputeFormProps {
   onCreated: (id: bigint) => void;
@@ -283,18 +283,21 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         }
 
         const rawHash = item.contentHash.trim();
-        if (rawHash && !isHexString(rawHash, 32)) {
-          setError(
-            `Evidence #${i + 1}: content hash must be 32 bytes of hex (0x followed by 64 characters).`,
-          );
-          return;
+        if (rawHash) {
+          const hex = rawHash.replace(/^0x/i, '');
+          if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+            setError(
+              `Evidence #${i + 1}: content hash must be 32 bytes of hex (0x optional, 64 hex characters).`,
+            );
+            return;
+          }
         }
 
         prepared.push({
           evidenceType: item.evidenceType,
           source,
           refUri,
-          contentHash: rawHash || ZeroHash,
+          contentHash: rawHash ? toBytes32(rawHash, () => ZeroHash) : ZeroHash,
           description: item.description.trim(),
         });
       }
@@ -317,7 +320,13 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       }
 
       const stakeWei = parseEther(stake || '0.001');
-      const agreementHashBytes = '0x' + (agreementHash || generateHash()).padStart(64, '0');
+      let agreementHashBytes: string;
+      try {
+        agreementHashBytes = toBytes32(agreementHash, generateHash);
+      } catch (err: any) {
+        setError(err.message || 'Agreement hash is invalid.');
+        return;
+      }
 
       setProgress('Creating dispute...');
 
@@ -388,6 +397,17 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
 
   function generateHash(): string {
     return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
+  }
+
+  /** Normalize any pasted hash to 0x + exactly 64 hex chars (no double prefix). */
+  function toBytes32(input: string, fallback: () => string): string {
+    const trimmed = input.trim();
+    if (!trimmed) return '0x' + fallback().replace(/^0x/i, '').padStart(64, '0').slice(0, 64);
+    const hex = trimmed.replace(/^0x/i, '');
+    if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length > 64) {
+      throw new Error('Hash must be hex (0x optional) and at most 32 bytes.');
+    }
+    return '0x' + hex.padStart(64, '0');
   }
 
   function dismissError() {
