@@ -93,8 +93,19 @@ describe('describeError', () => {
     expect(err.hash).toBe('0xabc');
   });
 
-  it('keeps generic fetch failures as network errors', () => {
+  it('classifies generic fetch failures as temporary RPC errors', () => {
     const friendly = describeError(new Error('fetch failed'));
-    expect(friendly.title).toBe('Cannot reach the GenLayer network');
+    expect(friendly.title).toBe('RPC briefly unreachable');
+    expect(friendly.retryable).toBe(true);
+  });
+
+  it('classifies Cloudflare 502 / CORS blips as temporary RPC errors', () => {
+    const corsMsg =
+      'Failed to fetch: Response to preflight request doesn\'t pass access control check: ' +
+      'No \'Access-Control-Allow-Origin\' header is present on the requested resource. ' +
+      'net::ERR_FAILED 502 Bad Gateway';
+    const friendly = describeError(new Error(corsMsg));
+    expect(friendly.title).toBe('RPC briefly unreachable');
+    expect(friendly.retryable).toBe(true);
   });
 });

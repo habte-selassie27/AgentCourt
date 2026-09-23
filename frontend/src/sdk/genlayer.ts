@@ -108,44 +108,61 @@ export class GenLayerClient {
   }
 
   async genCallRaw<T = unknown>(to: string, method: string, args: unknown[]): Promise<GenCallResult<T>> {
-    try {
-      const result = await this.client.readContract({
-        address: to as `0x${string}`,
-        functionName: method,
-        args: args as any[],
-      });
-      return { ok: true, data: result as T };
-    } catch (err: any) {
-      const message = err?.message ?? String(err);
+    const maxAttempts = 3;
+    let lastMessage = '';
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const result = await this.client.readContract({
+          address: to as `0x${string}`,
+          functionName: method,
+          args: args as any[],
+        });
+        return { ok: true, data: result as T };
+      } catch (err: any) {
+        const message = err?.message ?? String(err);
+        lastMessage = message;
 
-      // Check for contract execution errors
-      if (/execution failed|exit_code|contract execution/i.test(message)) {
+        // Check for contract execution errors (not retryable)
+        if (/execution failed|exit_code|contract execution/i.test(message)) {
+          return {
+            ok: false,
+            error: {
+              kind: 'execution',
+              message: `Contract execution failed (${message}).`,
+              executionResult: message,
+            },
+          };
+        }
+
+        // Transient network / RPC errors — retry briefly (Cloudflare 502s clear in seconds)
+        const isNetwork = /fetch|network|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|failed to fetch|502|503|504|Bad Gateway/i.test(message);
+        if (isNetwork) {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, attempt * 700));
+            continue;
+          }
+          return {
+            ok: false,
+            error: {
+              kind: 'rpc',
+              message: `Could not reach the GenLayer RPC (${this.rpcUrl}) after ${maxAttempts} attempts. The endpoint may be briefly down — retry in a moment.`,
+            },
+          };
+        }
+
         return {
           ok: false,
-          error: {
-            kind: 'execution',
-            message: `Contract execution failed (${message}).`,
-            executionResult: message,
-          },
+          error: { kind: 'rpc', message },
         };
       }
-
-      // Network / RPC errors
-      if (/fetch|network|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|failed to fetch/i.test(message)) {
-        return {
-          ok: false,
-          error: {
-            kind: 'rpc',
-            message: `Could not reach the GenLayer RPC (${this.rpcUrl}). Check your connection or the VITE_RPC_URL setting.`,
-          },
-        };
-      }
-
-      return {
-        ok: false,
-        error: { kind: 'rpc', message },
-      };
     }
+    return {
+      ok: false,
+      error: {
+        kind: 'rpc',
+        message: lastMessage || `gen_call ${method} failed`,
+      },
+    };
   }
 
   /** Raise if the finalized leader receipt reports a contract error / rollback. */

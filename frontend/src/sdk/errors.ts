@@ -47,13 +47,14 @@ export function describeError(err: unknown): FriendlyError {
     };
   }
 
-  // Network / RPC reachability
-  if (/could not reach|network|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|Failed to fetch/i.test(message)) {
+  // Network / RPC reachability (incl. transient Cloudflare 502s that Chrome reports as CORS)
+  if (/could not reach|network|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|Failed to fetch|Bad Gateway|ERR_FAILED|CORS/i.test(message)) {
     return {
-      title: 'Cannot reach the GenLayer network',
+      title: 'RPC briefly unreachable',
       hint:
-        'Your browser could not contact the RPC endpoint. Check your internet connection ' +
-        'and the VITE_RPC_URL configured for this deployment.',
+        'The GenLayer endpoint returned a temporary error (often a 502 that Chrome shows as CORS). ' +
+        'This usually clears in a few seconds — hard-refresh (Ctrl+Shift+R) and retry. ' +
+        'If it persists, check the VITE_RPC_URL for this deployment.',
       detail: message,
       retryable: true,
     };
