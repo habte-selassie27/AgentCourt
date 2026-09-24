@@ -93,6 +93,24 @@ describe('describeError', () => {
     expect(err.hash).toBe('0xabc');
   });
 
+  it('classifies wallet account drift (-32602 from mismatch)', () => {
+    const friendly = describeError(
+      new Error(
+        "Error using provider for method eth_sendTransaction: {code: -32602, message: 'from should be same as current address'}",
+      ),
+    );
+    expect(friendly.title).toBe('Wallet account changed');
+    expect(friendly.retryable).toBe(true);
+  });
+
+  it('classifies missing wallet account after disconnect', () => {
+    const friendly = describeError(
+      new Error('Wallet has no selected account — reconnect and try again.'),
+    );
+    expect(friendly.title).toBe('Wallet account changed');
+    expect(friendly.retryable).toBe(true);
+  });
+
   it('classifies generic fetch failures as temporary RPC errors', () => {
     const friendly = describeError(new Error('fetch failed'));
     expect(friendly.title).toBe('RPC briefly unreachable');

@@ -109,6 +109,38 @@ export class GenLayerClient {
     } as any);
   }
 
+  /**
+   * Rebind the write client after the wallet switches accounts.
+   * Without this, eth_sendTransaction keeps the old `from` and the wallet
+   * rejects with -32602 "from should be same as current address".
+   */
+  async switchAccount(ethereum: unknown, address: `0x${string}`): Promise<void> {
+    await this.connectWallet(ethereum, address);
+  }
+
+  /** Drop the write client (wallet disconnected / no accounts). */
+  disconnectWallet(): void {
+    this.writeAddress = null;
+    this.writeClient = null;
+  }
+
+  /**
+   * Ensure writeClient.account still matches the wallet's selected account.
+   * Returns the live address, or null if the wallet has no accounts.
+   */
+  async refreshWalletAccount(ethereum: unknown): Promise<`0x${string}` | null> {
+    const accounts = await (ethereum as any).request({ method: 'eth_accounts' });
+    const live = String(accounts?.[0] ?? '') as `0x${string}`;
+    if (!live) {
+      this.disconnectWallet();
+      return null;
+    }
+    if (live.toLowerCase() !== (this.writeAddress ?? '').toLowerCase()) {
+      await this.connectWallet(ethereum, live);
+    }
+    return live;
+  }
+
   get connectedAddress(): `0x${string}` | null {
     return this.writeAddress;
   }

@@ -285,6 +285,7 @@ export class AgentCourt {
   private gl: GenLayerClient;
   private connected = false;
   private deployedChecked = false;
+  private ethereum: unknown | null = null;
 
   constructor(config: AgentCourtConfig) {
     this.config = config;
@@ -295,8 +296,30 @@ export class AgentCourt {
     const accounts = await (ethereum as any).request({ method: 'eth_requestAccounts' });
     const address = String(accounts[0]) as `0x${string}`;
     await this.gl.connectWallet(ethereum, address);
+    this.ethereum = ethereum;
     this.connected = true;
     return address;
+  }
+
+  /**
+   * Follow the wallet when the user switches accounts (or disconnects).
+   * Keeps writeClient.account in sync so eth_sendTransaction `from` matches.
+   */
+  async syncWalletAccount(ethereum: unknown): Promise<string | null> {
+    this.ethereum = ethereum;
+    const live = await this.gl.refreshWalletAccount(ethereum);
+    if (!live) {
+      this.connected = false;
+      return null;
+    }
+    this.connected = true;
+    return live;
+  }
+
+  disconnectWallet(): void {
+    this.gl.disconnectWallet();
+    this.ethereum = null;
+    this.connected = false;
   }
 
   getSigner(): string | null {
@@ -306,6 +329,25 @@ export class AgentCourt {
   private requireConnected(): void {
     if (!this.connected || !this.gl.hasWriteClient) {
       throw new Error('Wallet not connected');
+    }
+  }
+
+  /**
+   * Re-check the wallet's selected account right before a write.
+   * Auto-heals after an in-page account switch that missed accountsChanged.
+   */
+  private async ensureWriteAccountMatches(): Promise<void> {
+    this.requireConnected();
+    if (!this.ethereum) return;
+    try {
+      const live = await this.gl.refreshWalletAccount(this.ethereum);
+      if (!live) {
+        this.connected = false;
+        throw new Error('Wallet has no selected account — reconnect and try again.');
+      }
+    } catch (err) {
+      if (err instanceof Error && /no selected account/i.test(err.message)) throw err;
+      // Provider blip — keep the existing client rather than failing the write path.
     }
   }
 
@@ -333,6 +375,7 @@ export class AgentCourt {
     wait?: { waitRetries?: number; waitIntervalMs?: number; wait?: boolean },
   ): Promise<string> {
     this.requireConnected();
+    await this.ensureWriteAccountMatches();
     return this.gl.genWrite(this.config.coreAddress, method, args, { value, ...wait });
   }
 

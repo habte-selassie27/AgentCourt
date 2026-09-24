@@ -26,12 +26,27 @@ function App() {
 
     let lastChainId: number | null = null;
     const onAccountsChanged = (accounts: string[]) => {
+      // Keep the SDK writeClient.account in lockstep with the wallet's
+      // selected account — otherwise eth_sendTransaction fails with
+      // -32602 "from should be same as current address".
+      const court = getCourt();
       if (accounts.length === 0) {
+        court.disconnectWallet();
         setWalletConnected(false);
         setWalletAddress('');
-      } else {
-        setWalletAddress(String(accounts[0] ?? ''));
+        return;
       }
+      void court
+        .syncWalletAccount(window.ethereum)
+        .then((live) => {
+          setWalletConnected(Boolean(live));
+          setWalletAddress(live ?? String(accounts[0] ?? ''));
+        })
+        .catch((err) => {
+          console.error('Failed to resync wallet account:', err);
+          setWalletConnected(false);
+          setWalletAddress(String(accounts[0] ?? ''));
+        });
     };
     const onChainChanged = (chainHex: string) => {
       const id = parseInt(chainHex, 16);
@@ -64,6 +79,7 @@ function App() {
 
   const handleConnectWallet = async () => {
     if (walletConnected) {
+      getCourt().disconnectWallet();
       setWalletConnected(false);
       setWalletAddress('');
       return;

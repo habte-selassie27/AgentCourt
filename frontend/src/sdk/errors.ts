@@ -47,6 +47,21 @@ export function describeError(err: unknown): FriendlyError {
     };
   }
 
+  // Wallet account mismatch (switched accounts in Rabby/MetaMask after connect)
+  if (
+    /from should be same as current address|-32602|from address|wrong from/i.test(message) ||
+    /no selected account|wallet has no selected account/i.test(message)
+  ) {
+    return {
+      title: 'Wallet account changed',
+      hint:
+        'Your wallet selected a different account than this page is using. ' +
+        'The app will resync automatically — switch back to the original account, or reconnect the wallet and retry.',
+      detail: message,
+      retryable: true,
+    };
+  }
+
   // Network / RPC reachability (incl. transient Cloudflare 502s that Chrome reports as CORS)
   if (/could not reach|network|fetch failed|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|Failed to fetch|Bad Gateway|ERR_FAILED|CORS/i.test(message)) {
     return {
