@@ -105,10 +105,10 @@ vercel --prod
 
 | Contract | Address | Tx / notes |
 |---|---|---|
-| ResolutionManager | `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d` | `set_core` wired |
-| AgentCourtCore | `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47` | ctor arg = manager above |
+| ResolutionManager | `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530` | manually deployed via Studio; `set_core` **pending** (owner must call) |
+| AgentCourtCore | `0xEC3d5e5375823F936d6Adb2F4541aa8966672578` | manually deployed via Studio; owner `0x5B36…4c89` |
 
-Active account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b`.
+Active CLI account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b` (not owner — cannot call `set_core`).
 
 ### Orphan / failed deploys (do not use)
 
@@ -124,6 +124,11 @@ Active account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b`.
 | `0x1201eF62b96133c652c668e200C096D16BcaD0CF` | Legacy pre-remediation core (never deployed) |
 | `0xa8c7C20Edd5db93067203939Ad6a85eDb52B5F55` | Legacy pre-remediation manager |
 | `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4` | Legacy DisputeRegistry (removed from codebase) |
+| `0x88D6013FC7aC2c0Af802F4DaC6F7e3d5983e5685` | Prior CLI core; superseded by manual Studio deploy |
+| `0xA0F4D59ba22651bb11e48C4d827ED160c2b30525` | Prior CLI manager; superseded by manual Studio deploy |
+| `0xb02d083109B1A0214BF700fB1a5acF7eaF7c0d1A` | Orphan parallel core (set_core already taken) |
+| `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47` | Older CLI core; superseded |
+| `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d` | Older CLI manager; superseded |
 
 ### Removed supporting contracts (deterministic helpers — deleted)
 
@@ -237,8 +242,8 @@ async function checkHealth() {
 ```
 
 ### Explorer Links
-- AgentCourtCore: `0x7C696ab6bf4AD478e22a588F1209E543a50D4a47`
-- ResolutionManager: `0x94ea120e2E0Ad2eD909A62f79e722BfAFeE7329d`
+- AgentCourtCore: `0xEC3d5e5375823F936d6Adb2F4541aa8966672578`
+- ResolutionManager: `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530`
 - DisputeRegistry: removed from codebase (legacy: `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4`)
 
 ## Alerting
