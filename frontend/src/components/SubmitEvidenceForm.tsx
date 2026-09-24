@@ -53,7 +53,7 @@ export function SubmitEvidenceForm({ disputeId, onSubmitted, onCancel }: SubmitE
         hash = '0x' + crypto.randomUUID().replace(/-/g, '').slice(0, 64).padEnd(64, '0');
       }
 
-      await court.submitEvidence({
+      const evidenceId = await court.submitEvidence({
         disputeId,
         evidenceType,
         source,
@@ -61,6 +61,9 @@ export function SubmitEvidenceForm({ disputeId, onSubmitted, onCancel }: SubmitE
         contentHash: hash,
         description,
       });
+      if (evidenceId === null) {
+        throw new Error('Evidence was submitted but did not appear on-chain yet — refresh shortly.');
+      }
 
       setTxHash('submitted');
       onSubmitted();

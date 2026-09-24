@@ -34,7 +34,7 @@ export class ContractExecutionError extends Error {
 }
 
 /**
- * Tx was submitted but not FINALIZED yet (common for request_evaluation —
+ * Tx was submitted but not ACCEPTED yet (common for request_evaluation —
  * LLM + consensus can run for many minutes).
  */
 export class TransactionPendingError extends Error {
@@ -217,20 +217,24 @@ export class GenLayerClient {
   }
 
   /**
-   * Wait for a transaction to reach FINALIZED while tolerating transient RPC
+   * Wait for a transaction to reach ACCEPTED while tolerating transient RPC
    * failures (studionet's gateway intermittently answers 502; Chrome surfaces
    * those as CORS "Failed to fetch" errors mid-poll).
    *
+   * ACCEPTED is consensus-decided and typically lands in ~2–5s on Studionet;
+   * waiting only for FINALIZED added many seconds of pure finality lag to every
+   * create/evidence/investigation write.
+   *
    * The underlying genlayer-js wait aborts on the first such error, so we wrap
    * it and keep spending the remaining budget. `totalRetries` is expressed in
-   * polls of `intervalMs` (default 3s), matching the old waitRetries semantics.
+   * polls of `intervalMs` (default 1s).
    */
-  private async waitForFinalizedReceipt(
+  private async waitForAcceptedReceipt(
     hash: string,
     totalRetries: number,
     intervalMs: number,
   ): Promise<unknown> {
-    const CHUNK = 60; // per-attempt SDK budget ≈ 3 min at 3s interval
+    const CHUNK = 60;
     let waited = 0;
     while (waited < totalRetries) {
       const budget = Math.min(CHUNK, totalRetries - waited);
@@ -238,41 +242,56 @@ export class GenLayerClient {
       try {
         return await this.client.waitForTransactionReceipt({
           hash: hash as `0x${string}`,
-          status: TransactionStatus.FINALIZED,
+          status: TransactionStatus.ACCEPTED,
           interval: intervalMs,
           retries: budget,
         } as any);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (/Timed out waiting for transaction/i.test(message)) {
-          // Full budget elapsed without an RPC failure — tx genuinely needs more time.
           continue;
         }
         if (!this.isTransientRpcError(message)) {
           throw err;
         }
         // RPC blip — pause briefly, then keep waiting with the remaining budget.
-        await new Promise((r) => setTimeout(r, 2_000));
+        await new Promise((r) => setTimeout(r, 500));
       }
     }
     throw new Error(
-      `Timed out waiting for transaction ${hash} to reach status "FINALIZED".`,
+      `Timed out waiting for transaction ${hash} to reach status "ACCEPTED".`,
+    );
+  }
+
+  private static isDoneStatus(status: string | null): boolean {
+    if (status === null) return false;
+    const s = status.toUpperCase();
+    return (
+      s === 'ACCEPTED' ||
+      s === 'FINALIZED' ||
+      s === '5' ||
+      s === '7' ||
+      s === 'DECIDED'
     );
   }
 
   /**
    * Write through genlayer-js (NOT ethers/eth_call).
-   * Returns the transaction hash; waits for FINALIZED and checks execution result.
+   * Returns the transaction hash; waits for ACCEPTED and checks execution result.
    *
-   * Default wait ≈ 3 minutes. request_evaluation (LLM + consensus) passes a much
-   * longer budget — genlayer-js defaults to only 10×3s. The wait itself survives
-   * transient RPC blips instead of failing the write after the tx was submitted.
+   * Pass `{ wait: false }` to return as soon as the tx is submitted (caller
+   * batches further writes, then polls chain state once).
    */
   async genWrite(
     to: string,
     method: string,
     args: unknown[],
-    opts: { value?: bigint; waitRetries?: number; waitIntervalMs?: number } = {},
+    opts: {
+      value?: bigint;
+      waitRetries?: number;
+      waitIntervalMs?: number;
+      wait?: boolean;
+    } = {},
   ): Promise<string> {
     if (!this.writeClient) {
       throw new Error('Wallet not connected');
@@ -285,37 +304,36 @@ export class GenLayerClient {
       value: opts.value ?? BigInt(0),
     } as any);
 
-    // genlayer-js defaults: interval=3s, retries=10 → only ~30s. Evaluation needs minutes.
-    const interval = opts.waitIntervalMs ?? 3_000;
-    const retries = opts.waitRetries ?? 60; // ~3 min for normal writes
+    if (opts.wait === false) {
+      return String(hash);
+    }
+
+    // ACCEPTED ≈ 2–5s with 1s polls; eval still gets a long wall-clock budget.
+    const interval = opts.waitIntervalMs ?? 1_000;
+    const retries = opts.waitRetries ?? 90; // ~90s for normal writes
 
     let receipt: unknown;
     try {
-      receipt = await this.waitForFinalizedReceipt(String(hash), retries, interval);
+      receipt = await this.waitForAcceptedReceipt(String(hash), retries, interval);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/Timed out waiting for transaction/i.test(message)) {
         throw err;
       }
-      // All wait budgets are spent. Decide: still progressing → pending, not failure.
       const current = await this.safeGetStatus(String(hash));
-      if (current !== null && current !== 'FINALIZED' && current !== '7') {
-        // Submitted and still progressing — not a failure.
+      if (current !== null && !GenLayerClient.isDoneStatus(current)) {
         throw new TransactionPendingError(String(hash), current);
       }
-      // Finalized (or unknown status) between polls — fall through to re-check once.
       receipt = await this.client
         .waitForTransactionReceipt({
           hash,
-          status: TransactionStatus.FINALIZED,
-          interval: 1_000,
-          retries: 5,
+          status: TransactionStatus.ACCEPTED,
+          interval: 500,
+          retries: 10,
         } as any)
         .catch(() => null);
       if (!receipt) {
-        if (current === 'FINALIZED' || current === '7') {
-          // Node reports FINALIZED even though the receipt re-check failed;
-          // execution-result inspection is best-effort, so treat as done.
+        if (GenLayerClient.isDoneStatus(current)) {
           return String(hash);
         }
         throw new TransactionPendingError(String(hash), current ?? 'unknown');

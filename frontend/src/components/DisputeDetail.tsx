@@ -59,11 +59,11 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     pollTimerRef.current = setInterval(() => {
       ticks += 1;
       void loadData();
-      if (ticks >= 20) {
+      if (ticks >= 40) {
         if (pollTimerRef.current) clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
-    }, 8_000);
+    }, 4_000);
   }, [loadData]);
 
   useEffect(() => {
@@ -244,7 +244,7 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
               void runAction(
                 'evaluate',
                 () => getCourt().requestEvaluation(disputeId),
-                'Evaluation transaction finalized. Refresh to view consensus state.',
+                'Evaluation reached ACCEPTED. Consensus state is on-chain.',
               )
             }
           >

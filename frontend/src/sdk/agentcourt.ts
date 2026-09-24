@@ -330,7 +330,7 @@ export class AgentCourt {
     method: string,
     args: unknown[],
     value = BigInt(0),
-    wait?: { waitRetries?: number; waitIntervalMs?: number },
+    wait?: { waitRetries?: number; waitIntervalMs?: number; wait?: boolean },
   ): Promise<string> {
     this.requireConnected();
     return this.gl.genWrite(this.config.coreAddress, method, args, { value, ...wait });
@@ -470,7 +470,7 @@ export class AgentCourt {
       ],
       BigInt(0),
     );
-    const after = await this.getDisputeCount();
+    const after = await this.pollDisputeCount(before + BigInt(1));
     if (after !== before + BigInt(1)) {
       throw new ContractExecutionError(
         'create_dispute',
@@ -480,28 +480,111 @@ export class AgentCourt {
     return after;
   }
 
-  async submitEvidence(params: {
-    disputeId: bigint;
-    evidenceType: string;
-    source: string;
-    refUri: string;
-    contentHash: string;
-    description: string;
-  }): Promise<bigint> {
-    await this.writeCore('submit_evidence', [
-      Number(params.disputeId),
-      EVIDENCE_TYPE_MAP[params.evidenceType] ?? 0,
-      params.source,
-      params.refUri,
-      params.contentHash,
-      params.description,
-    ]);
-    const ids = await this.getDisputeEvidenceIds(params.disputeId);
-    const last = ids[ids.length - 1];
-    if (last === undefined) {
-      throw new Error('Evidence not recorded after submit_evidence.');
+  /** Poll until `get_dispute_count` reaches `target` (accepted-state read lag). */
+  private async pollDisputeCount(target: bigint, timeoutMs = 15_000): Promise<bigint> {
+    const deadline = Date.now() + timeoutMs;
+    let last = await this.getDisputeCount();
+    while (Date.now() < deadline) {
+      if (last >= target) return last;
+      await new Promise((r) => setTimeout(r, 400));
+      last = await this.getDisputeCount();
     }
     return last;
+  }
+
+  async submitEvidence(
+    params: {
+      disputeId: bigint;
+      evidenceType: string;
+      source: string;
+      refUri: string;
+      contentHash: string;
+      description: string;
+    },
+    opts: { wait?: boolean } = {},
+  ): Promise<bigint | null> {
+    const wait = opts.wait !== false;
+    await this.writeCore(
+      'submit_evidence',
+      [
+        Number(params.disputeId),
+        EVIDENCE_TYPE_MAP[params.evidenceType] ?? 0,
+        params.source,
+        params.refUri,
+        params.contentHash,
+        params.description,
+      ],
+      BigInt(0),
+      { wait },
+    );
+    if (!wait) {
+      return null;
+    }
+    return (await this.pollLastEvidenceId(params.disputeId)) ?? null;
+  }
+
+  private async pollLastEvidenceId(
+    disputeId: bigint,
+    timeoutMs = 15_000,
+  ): Promise<bigint | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const ids = await this.getDisputeEvidenceIds(disputeId);
+      const last = ids[ids.length - 1];
+      if (last !== undefined) return last;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return undefined;
+  }
+
+  /**
+   * Submit several evidence items as back-to-back txs (no per-tx consensus wait),
+   * then poll until all are visible on the accepted state.
+   */
+  async submitEvidenceBatch(
+    items: Array<{
+      disputeId: bigint;
+      evidenceType: string;
+      source: string;
+      refUri: string;
+      contentHash: string;
+      description: string;
+    }>,
+  ): Promise<bigint[]> {
+    if (items.length === 0) return [];
+    const disputeId = items[0]!.disputeId;
+    const before = await this.getDisputeEvidenceIds(disputeId);
+
+    for (const item of items) {
+      await this.writeCore(
+        'submit_evidence',
+        [
+          Number(item.disputeId),
+          EVIDENCE_TYPE_MAP[item.evidenceType] ?? 0,
+          item.source,
+          item.refUri,
+          item.contentHash,
+          item.description,
+        ],
+        BigInt(0),
+        { wait: false },
+      );
+    }
+
+    const target = before.length + items.length;
+    const deadline = Date.now() + 20_000;
+    let ids = before;
+    while (Date.now() < deadline) {
+      ids = await this.getDisputeEvidenceIds(disputeId);
+      if (ids.length >= target) return ids.slice(before.length);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (ids.length < target) {
+      throw new Error(
+        `Evidence batch incomplete: expected ${target} items, found ${ids.length} on-chain.`,
+      );
+    }
+    return ids.slice(before.length);
   }
 
   async startInvestigation(disputeId: bigint): Promise<void> {
@@ -511,10 +594,10 @@ export class AgentCourt {
   /** Kick off nondeterministic evaluation + validator consensus. No verdict args. */
   async requestEvaluation(disputeId: bigint): Promise<void> {
     // LLM + adversarial + validator consensus regularly exceeds 30s / even 3 min.
-    // Budget ≈ 15 minutes (300 × 3s) before surfacing TransactionPendingError.
+    // Budget ≈ 10 minutes (600 × 1s) before surfacing TransactionPendingError.
     await this.writeCore('request_evaluation', [Number(disputeId)], BigInt(0), {
-      waitRetries: 300,
-      waitIntervalMs: 3_000,
+      waitRetries: 600,
+      waitIntervalMs: 1_000,
     });
   }
 

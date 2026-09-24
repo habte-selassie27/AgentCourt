@@ -346,20 +346,27 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       let submitted = 0;
       const failures: string[] = [];
 
-      for (const [i, item] of prepared.entries()) {
-        setProgress(`Submitting evidence ${i + 1} of ${prepared.length}...`);
+      if (prepared.length > 0) {
+        setProgress(
+          prepared.length > 1
+            ? `Submitting ${prepared.length} evidence items…`
+            : 'Submitting evidence 1 of 1...',
+        );
         try {
-          await court.submitEvidence({
-            disputeId,
-            evidenceType: item.evidenceType,
-            source: item.source,
-            refUri: item.refUri,
-            contentHash: item.contentHash,
-            description: item.description,
-          });
-          submitted += 1;
+          // Back-to-back submits (no per-item consensus wait), then one poll.
+          await court.submitEvidenceBatch(
+            prepared.map((item) => ({
+              disputeId,
+              evidenceType: item.evidenceType,
+              source: item.source,
+              refUri: item.refUri,
+              contentHash: item.contentHash,
+              description: item.description,
+            })),
+          );
+          submitted = prepared.length;
         } catch (err: any) {
-          failures.push(`#${i + 1}: ${err?.shortMessage || err?.message || 'transaction failed'}`);
+          failures.push(err?.shortMessage || err?.message || 'transaction failed');
         }
       }
 
@@ -367,8 +374,8 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
         setCreatedId(disputeId);
         savePendingId(disputeId);
         setError(
-          `Dispute #${disputeId} was created with ${submitted} of ${prepared.length} evidence items. ` +
-            `Failed — ${failures.join('; ')} — open the dispute to add the missing evidence.`,
+          `Dispute #${disputeId} was created, but evidence upload hit a snag: ` +
+            `${failures.join('; ')} — open the dispute to add evidence from the Evidence tab.`,
         );
         return;
       }

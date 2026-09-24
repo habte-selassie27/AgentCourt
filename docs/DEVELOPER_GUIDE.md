@@ -65,7 +65,8 @@ const address = await court.connectWallet((window as any).ethereum);
 | Method | Returns |
 |---|---|
 | `createDispute(params)` | `bigint` — new dispute id |
-| `submitEvidence(params)` | `bigint` — new evidence id |
+| `submitEvidence(params)` | `bigint \| null` — new evidence id, or `null` when `{ wait: false }` |
+| `submitEvidenceBatch(items)` | `bigint[]` — evidence ids after a fire-and-forget batch + accepted-state poll |
 | `startInvestigation(disputeId: bigint)` | `void` |
 | `requestEvaluation(disputeId: bigint)` | `void` — runs the evaluation pipeline (may take minutes) |
 | `finalizeVerdict(disputeId: bigint)` | `void` — derives the verdict from the stored evaluation |

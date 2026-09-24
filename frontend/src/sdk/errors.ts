@@ -39,9 +39,9 @@ export function describeError(err: unknown): FriendlyError {
     return {
       title: 'Transaction still processing',
       hint:
-        'The transaction was signed and is on-chain, but has not reached FINALIZED yet. ' +
+        'The transaction was signed and is on-chain, but has not reached ACCEPTED yet. ' +
         'Request Evaluation (LLM + consensus) can take several minutes. ' +
-        'Do not resubmit — refresh this page in a minute or two.',
+        'Do not resubmit — this page will auto-refresh.',
       detail: message,
       retryable: false,
     };
