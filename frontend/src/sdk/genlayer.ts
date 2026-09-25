@@ -66,6 +66,35 @@ export class TransactionPendingError extends Error {
 }
 
 /**
+ * The transaction reached ACCEPTED but validators never agreed on the leader's
+ * result, so **no state was committed**.
+ *
+ * ACCEPTED means "included", not "succeeded". `NO_MAJORITY` (and `TIMEOUT` /
+ * `DETERMINISTIC_VIOLATION`) leave the contract untouched — most visibly when
+ * the nondeterministic block kills the leader VM, leaving zero votes committed.
+ * Reporting success here would be a lie, so callers must treat this as failure.
+ */
+export class ConsensusFailedError extends Error {
+  readonly method: string;
+  readonly result: string;
+  readonly votesCommitted: number;
+  readonly lastLeader: string;
+  constructor(method: string, result: string, votesCommitted: number, lastLeader: string) {
+    super(
+      `Validators did not agree on "${method}" (${result}` +
+        (lastLeader ? `, last leader: ${lastLeader}` : '') +
+        (votesCommitted === 0 ? ', 0 validator votes committed' : '') +
+        '). No state was committed on-chain.',
+    );
+    this.name = 'ConsensusFailedError';
+    this.method = method;
+    this.result = result;
+    this.votesCommitted = votesCommitted;
+    this.lastLeader = lastLeader;
+  }
+}
+
+/**
  * True for transient RPC failures that can occur mid-poll while a long-running
  * transaction (e.g. request_evaluation) is still processing: gateway blips,
  * 502/503/504s that Chrome reports as CORS "Failed to fetch", and short
@@ -79,6 +108,36 @@ export function isTransientRpcWaitError(message: string): boolean {
   return /fetch|network|timeout|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|failed to fetch|502|503|504|Bad Gateway|CORS|ERR_FAILED|Transaction not found/i.test(
     message,
   );
+}
+
+export interface ConsensusFailure {
+  result: string;
+  votesCommitted: number;
+  lastLeader: string;
+}
+
+/**
+ * Pull the consensus outcome out of a transaction receipt.
+ *
+ * Returns `null` when the leader's result was accepted, and also when the node
+ * omitted the field entirely (some Studionet responses do) — we only report a
+ * failure we can actually prove. `resultName` is preferred; the numeric
+ * `result` code is the fallback (1 = AGREE, 6 = MAJORITY_AGREE).
+ */
+export function detectConsensusFailure(receipt: unknown): ConsensusFailure | null {
+  const r = (receipt ?? {}) as Record<string, any>;
+  const rawResult = r.resultName ?? r.result;
+  if (rawResult === undefined || rawResult === null) return null;
+
+  const name = String(rawResult).toUpperCase();
+  if (['AGREE', 'MAJORITY_AGREE', 'SUCCESS', '1', '6'].includes(name)) return null;
+
+  const round = r.lastRound ?? {};
+  return {
+    result: name,
+    votesCommitted: Number(round.votesCommitted ?? r.votesCommitted ?? 0),
+    lastLeader: String(r.lastLeader ?? ''),
+  };
 }
 
 export interface GenCallResult<T = unknown> {
@@ -395,7 +454,24 @@ export class GenLayerClient {
     // { status: 'contract_error' | 'rollback', payload: 'exit_code 1' | 'Dispute not found' }.
     this.assertLeaderReceiptOk(receipt, method);
 
+    // ACCEPTED ≠ succeeded. Without this check a NO_MAJORITY evaluation
+    // (leader crashed, 0 votes committed, nothing written) looks like success.
+    this.assertConsensusAgreed(receipt, method);
+
     return String(hash);
+  }
+
+  /** Only `MAJORITY_AGREE` / `AGREE` commit state — see detectConsensusFailure. */
+  private assertConsensusAgreed(receipt: unknown, method: string): void {
+    const failure = detectConsensusFailure(receipt);
+    if (failure) {
+      throw new ConsensusFailedError(
+        method,
+        failure.result,
+        failure.votesCommitted,
+        failure.lastLeader,
+      );
+    }
   }
 
   /** Status lookup with a few retries — this call itself can hit RPC blips. */

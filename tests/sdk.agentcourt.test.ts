@@ -8,7 +8,12 @@ import {
 } from '../frontend/src/dispute';
 import { VERDICTS, confidencePercent } from '../frontend/src/verdict';
 import { describeError } from '../frontend/src/sdk/errors';
-import { isTransientRpcWaitError, TransactionPendingError } from '../frontend/src/sdk/genlayer';
+import {
+  ConsensusFailedError,
+  detectConsensusFailure,
+  isTransientRpcWaitError,
+  TransactionPendingError,
+} from '../frontend/src/sdk/genlayer';
 
 describe('dispute domain', () => {
   it('includes evaluation fail-closed statuses', () => {
@@ -93,6 +98,18 @@ describe('describeError', () => {
     expect(err.hash).toBe('0xabc');
   });
 
+  it('classifies a NO_MAJORITY consensus failure as its own error', () => {
+    const err = new ConsensusFailedError('request_evaluation', 'NO_MAJORITY', 0, 'genvm_crash_handler');
+    const friendly = describeError(err);
+    expect(friendly.title).toBe('Evaluation did not reach consensus');
+    expect(friendly.retryable).toBe(true);
+    expect(err.name).toBe('ConsensusFailedError');
+    // The leader-crash fingerprint must survive into the message.
+    expect(err.message).toContain('NO_MAJORITY');
+    expect(err.message).toContain('genvm_crash_handler');
+    expect(err.message).toContain('0 validator votes committed');
+  });
+
   it('classifies wallet account drift (-32602 from mismatch)', () => {
     const friendly = describeError(
       new Error(
@@ -135,6 +152,39 @@ describe('describeError', () => {
     );
     expect(friendly.title).toBe('RPC briefly unreachable');
     expect(friendly.retryable).toBe(true);
+  });
+});
+
+describe('detectConsensusFailure', () => {
+  it('flags the live NO_MAJORITY / leader-crash receipt', () => {
+    const failure = detectConsensusFailure({
+      statusName: 'ACCEPTED',
+      resultName: 'NO_MAJORITY',
+      lastLeader: 'genvm_crash_handler',
+      lastRound: { votesCommitted: '0', votesRevealed: '0' },
+    });
+    expect(failure).not.toBeNull();
+    expect(failure?.result).toBe('NO_MAJORITY');
+    expect(failure?.votesCommitted).toBe(0);
+    expect(failure?.lastLeader).toBe('genvm_crash_handler');
+  });
+
+  it('accepts MAJORITY_AGREE / AGREE receipts', () => {
+    expect(detectConsensusFailure({ resultName: 'MAJORITY_AGREE' })).toBeNull();
+    expect(detectConsensusFailure({ resultName: 'AGREE' })).toBeNull();
+    expect(detectConsensusFailure({ result: 6 })).toBeNull();
+    expect(detectConsensusFailure({ result: 1 })).toBeNull();
+  });
+
+  it('flags every non-agreeing outcome', () => {
+    for (const result of ['NO_MAJORITY', 'MAJORITY_DISAGREE', 'DISAGREE', 'TIMEOUT', 'DETERMINISTIC_VIOLATION', 'IDLE']) {
+      expect(detectConsensusFailure({ resultName: result })?.result).toBe(result);
+    }
+  });
+
+  it('returns null when the node omits the result (cannot prove failure)', () => {
+    expect(detectConsensusFailure({ statusName: 'ACCEPTED' })).toBeNull();
+    expect(detectConsensusFailure(null)).toBeNull();
   });
 });
 

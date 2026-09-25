@@ -430,7 +430,7 @@ state, verdict, confidence_bp, review_required = classify_evaluation(
 
 ## Implementation in AgentCourtCore
 
-The full pipeline runs inside `AgentCourtCore.request_evaluation` under GenLayer validator consensus (`gl.vm.run_nondet_unsafe`); validators re-run the leader's computation and accept it only if `substantive_match` passes.
+The full pipeline runs inside `AgentCourtCore.request_evaluation` under GenLayer validator consensus (`gl.vm.run_nondet`); validators re-derive the leader's consensus block exactly (`consensus_consistent`) and corroborate decisive verdicts with an independent neutral re-evaluation before accepting.
 
 Protocol constants:
 

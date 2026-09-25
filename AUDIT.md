@@ -56,12 +56,14 @@ create_dispute / submit_evidence     (caller: claim + evidence only)
 start_investigation
         ↓
 request_evaluation
-  ├─ gl.nondet.web.render (http evidence)
+  ├─ gl.nondet.web.get (http evidence)
   ├─ gl.nondet.exec_prompt × 4 independent roles
   ├─ gl.nondet.exec_prompt (adversarial review)
-  └─ gl.vm.run_nondet_unsafe(leader, validator)
-        validators re-run the pipeline and compare
-        substantive outcome (state + finalVerdict + majority)
+  └─ gl.vm.run_nondet(leader, validator)
+        validators re-derive the consensus block exactly
+        (consensus_consistent: state, majority, finalVerdict,
+        validCount, confidenceBp, reviewRequired) and run one
+        independent neutral re-check on decisive verdicts
         ↓
 status ∈ {CONSENSUS | INCONCLUSIVE | DISPUTED | EVALUATION_FAILED}
         ↓
@@ -74,7 +76,7 @@ execute_settlement(dispute_id)   // NO verdict/action parameters
 
 ## Consensus
 
-- **In-protocol (GenLayer validators):** `run_nondet_unsafe` — leader executes the full evaluation; each validator independently re-executes and accepts only if `substantive_match` agrees on the **final outcome**, not free-text LLM strings.
+- **In-protocol (GenLayer validators):** `run_nondet` (sandboxed) — each validator first re-derives the consensus block from the leader's own evaluator payloads and rejects any drift (`consensus_consistent` — state, majority, finalVerdict, validCount, confidenceBp, reviewRequired), then runs one independent neutral evaluation to corroborate decisive TRUE/FALSE verdicts. Free-text reasoning is never compared.
 - **In-evaluation (4 LLM roles):** neutral, claimant_advocate, respondent_advocate, auditor → majority tally + agreement ratio.
 - **Adversarial review:** challenges lower confidence / force `reviewRequired` when `verdict_upheld` is false.
 - **Thresholds:** `MIN_VALID_EVALUATORS=2`, `AGREEMENT_CONSENSUS_THRESHOLD=0.6`.
@@ -105,7 +107,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 
 1. No caller verdict on finalize/settlement signatures  
 2. Caller cannot force verdict (pre-eval finalize raises; stranger blocked; manager core-only)  
-3. Evaluation path exists (`run_nondet_unsafe`, `exec_prompt`, `web.render` in source)  
+3. Evaluation path exists (`run_nondet`, `exec_prompt`, `web.get` in source)  
 4. Evidence appears in evaluation prompts; different tallies → different outcomes  
 5. Validator disagreement → `DISPUTED` / `INCONCLUSIVE`  
 6. Consensus majority → `CONSENSUS` + TRUE/FALSE mapping  

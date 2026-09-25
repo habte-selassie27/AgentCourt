@@ -37,11 +37,12 @@ from core.agentcourt_core import (  # type: ignore
     VERDICT_REVIEW,
     VERDICT_TRUE,
     VERDICT_UNVERIFIABLE,
+    build_consensus,
     build_evaluation_prompt,
     classify_evaluation,
+    consensus_consistent,
     normalize_evaluator,
     resolution_for_verdict,
-    substantive_match,
     tally_evaluators,
 )
 from registry.resolution_manager import ResolutionManager  # type: ignore
@@ -104,7 +105,7 @@ def sample_evaluators(verdicts):
 
 
 def stub_nondet(monkeypatch, evaluator_verdicts, adversarial=None):
-    """Stub gl.nondet so real leader_fn + validator_fn agree under run_nondet_unsafe."""
+    """Stub gl.nondet so real leader_fn + validator_fn agree under run_nondet."""
     if adversarial is None:
         adversarial = {
             "challenges": [],
@@ -217,16 +218,19 @@ class TestEvaluationPathExists:
 
     def test_source_uses_run_nondet_and_exec_prompt_and_web(self):
         source = inspect.getsource(AgentCourtCore.request_evaluation)
-        assert "run_nondet_unsafe" in source
+        assert "run_nondet" in source
         assert "exec_prompt" in source
-        assert "nondet.web" in source
-        assert "run_nondet_unsafe" in core_mod.__dict__ or True
+        # Web fetching is shared with the validator, so it lives in fetch_evidence.
+        assert "fetch_evidence" in source
 
     def test_module_source_references_nondeterministic_apis(self):
         src = inspect.getsource(core_mod)
-        assert "gl.vm.run_nondet_unsafe" in src
+        assert "gl.vm.run_nondet" in src
         assert "gl.nondet.exec_prompt" in src
         assert "gl.nondet.web.get" in src
+        # The unsandboxed variant is deliberately not used: a validator error
+        # must degrade to disagreement, not a VM-level crash.
+        assert "run_nondet_unsafe" not in src
 
     def test_no_deterministic_keyword_judge_path(self):
         # The fake deterministic judge modules must stay deleted.
@@ -360,7 +364,7 @@ class TestEvaluationFailure:
         def boom(*a, **k):
             raise RuntimeError("llm unavailable")
 
-        monkeypatch.setattr(core_mod.gl.vm, "run_nondet_unsafe", boom)
+        monkeypatch.setattr(core_mod.gl.vm, "run_nondet", boom)
         result_state = core.request_evaluation(did)
         assert result_state == STATE_EVALUATION_FAILED
         dispute = core.get_dispute(did)
@@ -375,7 +379,7 @@ class TestEvaluationFailure:
         def boom(*a, **k):
             raise RuntimeError("fail")
 
-        monkeypatch.setattr(core_mod.gl.vm, "run_nondet_unsafe", boom)
+        monkeypatch.setattr(core_mod.gl.vm, "run_nondet", boom)
         core.request_evaluation(did)
         with pytest.raises(_UserError):
             core.finalize_verdict(did)
@@ -403,34 +407,32 @@ class TestEvaluationFailure:
                 "reviewRequired": True,
             },
         }
-        monkeypatch.setattr(core_mod.gl.vm, "run_nondet_unsafe", lambda *a, **k: bad)
+        monkeypatch.setattr(core_mod.gl.vm, "run_nondet", lambda *a, **k: bad)
         # request_evaluation sees ok=False and stores failed status
         state = core.request_evaluation(did)
         assert state == STATE_EVALUATION_FAILED
         with pytest.raises(_UserError):
             core.finalize_verdict(did)
 
-    def test_substantive_match_rejects_different_final_verdict(self):
-        a = {
-            "ok": True,
-            "evaluators": sample_evaluators([SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED]),
-            "consensus": {
-                "state": STATE_CONSENSUS,
-                "finalVerdict": VERDICT_TRUE,
-                "validCount": 4,
-            },
-        }
-        b = {
-            "ok": True,
-            "evaluators": sample_evaluators([REFUTED, REFUTED, REFUTED, REFUTED]),
-            "consensus": {
-                "state": STATE_CONSENSUS,
-                "finalVerdict": VERDICT_FALSE,
-                "validCount": 4,
-            },
-        }
-        assert substantive_match(a, b) is False
-        assert substantive_match(a, dict(a)) is True
+    def test_consensus_consistent_accepts_the_derived_block(self):
+        derived = build_consensus(
+            sample_evaluators([SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED]), None
+        )
+        assert consensus_consistent(derived, derived) is True
+
+    def test_consensus_consistent_rejects_a_fabricated_consensus(self):
+        derived = build_consensus(
+            sample_evaluators([SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED]), None
+        )
+        assert derived["finalVerdict"] == VERDICT_TRUE
+
+        # A leader cannot claim the opposite verdict from agreeing evaluators.
+        assert consensus_consistent({**derived, "finalVerdict": VERDICT_FALSE}, derived) is False
+        # Nor inflate confidence, drop evaluators, or clear the review flag.
+        assert consensus_consistent({**derived, "confidenceBp": 9999}, derived) is False
+        assert consensus_consistent({**derived, "validCount": 9}, derived) is False
+        assert consensus_consistent({**derived, "majority": REFUTED}, derived) is False
+        assert consensus_consistent({**derived, "reviewRequired": True}, derived) is False
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +449,7 @@ class TestOnlyEvaluationFinalizes:
         )
         core.start_investigation(did)
 
-        # Real leader_fn + validator_fn under the stub's run_nondet_unsafe:
+        # Real leader_fn + validator_fn under the stub's run_nondet:
         # both re-execute the pipeline against deterministic nondet stubs.
         stub_nondet(monkeypatch, [SUPPORTED, SUPPORTED, SUPPORTED, REFUTED])
 
@@ -563,7 +565,7 @@ class TestOnlyEvaluationFinalizes:
             }
             return result
 
-        monkeypatch.setattr(core_mod.gl.vm, "run_nondet_unsafe", good)
+        monkeypatch.setattr(core_mod.gl.vm, "run_nondet", good)
         core.request_evaluation(did)
         core.finalize_verdict(did)
         record = core.get_verdict(did)

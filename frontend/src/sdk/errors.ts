@@ -31,6 +31,19 @@ export function describeError(err: unknown): FriendlyError {
     };
   }
 
+  // ACCEPTED but validators never agreed — the write committed nothing.
+  if (e.name === 'ConsensusFailedError' || /validators did not agree|NO_MAJORITY/i.test(message)) {
+    return {
+      title: 'Evaluation did not reach consensus',
+      hint:
+        'The transaction was accepted but validators did not agree on the leader result, ' +
+        'so no state changed on-chain. This usually means the nondeterministic evaluation ' +
+        'failed on the leader (it can also time out). The dispute is unchanged — retrying is safe.',
+      detail: message,
+      retryable: true,
+    };
+  }
+
   // Tx submitted but still running (evaluation / consensus takes minutes)
   if (
     e.name === 'TransactionPendingError' ||

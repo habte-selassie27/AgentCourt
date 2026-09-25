@@ -151,7 +151,7 @@ AgentCourt runs on GenLayer Studionet (Chain ID: 61999) during development.
 1. Evidence is collected and checked (web references are fetched during evaluation)
 2. Four role-based evaluators independently analyze the dispute
 3. An adversarial pass challenges the evaluators' conclusion
-4. Consensus is classified (CONSENSUS / INCONCLUSIVE / DISPUTED) and re-run by validators
+4. Consensus is classified (CONSENSUS / INCONCLUSIVE / DISPUTED) and checked by validators (exact re-derivation + independent neutral re-check)
 5. `finalize_verdict` derives the final verdict on-chain — callers cannot submit one
 
 ### What happens when evidence is insufficient?
@@ -192,7 +192,7 @@ Dispute participants post bonds. Malicious behavior can result in bond slashing.
 ## Phase 1 - Core Protocol ✅
 - [x] AgentCourtCore IC (disputes + evidence + evaluation + verdicts)
 - [x] ResolutionManager IC (settlement + appeals)
-- [x] Nondeterministic evaluation path (`run_nondet_unsafe` + `exec_prompt`)
+- [x] Nondeterministic evaluation path (`run_nondet` + `exec_prompt`)
 - [x] Frontend dashboard with evaluation workflow
 - [x] SDK integration (genlayer-js reads + writes)
 

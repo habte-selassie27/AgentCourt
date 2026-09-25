@@ -77,6 +77,16 @@ EVALUATOR_ROLES = ("neutral", "claimant_advocate", "respondent_advocate", "audit
 MIN_VALID_EVALUATORS = 2
 AGREEMENT_CONSENSUS_THRESHOLD = 0.6
 
+# A nondeterministic block runs under a bounded execution budget: each extra
+# prompt is another round trip the leader *and every validator* must fit inside.
+# Keep the payload small enough to finish while preserving the decisive facts.
+FETCH_EXCERPT_CHARS = 600
+FETCH_PROMPT_CHARS = 400
+EVIDENCE_DESC_CHARS = 160
+DISPUTE_DESC_CHARS = 900
+REASONING_CHARS = 1200
+ADVERSARIAL_REASONING_CHARS = 800
+
 SUPPORTED = "SUPPORTED"
 REFUTED = "REFUTED"
 INCONCLUSIVE_LABEL = "INCONCLUSIVE"
@@ -116,7 +126,7 @@ def normalize_evaluator(raw, role: str):
     except (TypeError, ValueError):
         confidence = 0
     confidence = max(0, min(100, confidence))
-    reasoning = str(raw.get("reasoning", "") or "")[:4000]
+    reasoning = str(raw.get("reasoning", "") or "")[:REASONING_CHARS]
     evidence_used = raw.get("evidenceUsed") or raw.get("evidence_used") or []
     if not isinstance(evidence_used, list):
         evidence_used = []
@@ -161,7 +171,7 @@ def normalize_adversarial(raw):
         norm_challenges.append(
             {
                 "type": str(item.get("type", "assumption"))[:64],
-                "description": str(item.get("description", ""))[:1000],
+                "description": str(item.get("description", ""))[:400],
                 "severity": severity,
                 "affectsVerdict": bool(item.get("affectsVerdict", item.get("affects_verdict", False))),
             }
@@ -177,7 +187,7 @@ def normalize_adversarial(raw):
     return {
         "challenges": norm_challenges,
         "verdictUpheld": held,
-        "reasoning": str(raw.get("reasoning", "") or "")[:4000],
+        "reasoning": str(raw.get("reasoning", "") or "")[:ADVERSARIAL_REASONING_CHARS],
         "confidenceAdjustment": adj,
     }
 
@@ -269,6 +279,84 @@ def classify_evaluation(tally: dict, adversarial) -> tuple:
     return (STATE_CONSENSUS, verdict, confidence_bp, review_required)
 
 
+def fetch_evidence(case: dict) -> list:
+    """Fetch live HTTP evidence for every evidence item (nondeterministic).
+
+    Called by both the leader and the validator, so each side sees the external
+    content it reasons over rather than trusting the other's copy.
+    """
+    fetches = []
+    for item in case.get("evidence") or []:
+        ref = str(item.get("refUri") or "")
+        eid = "EVID-" + str(item.get("id", ""))
+        if ref.startswith("http://") or ref.startswith("https://"):
+            try:
+                # web.get + explicit decode is lighter and more stable than
+                # web.render for API/JSON evidence URLs.
+                resp = gl.nondet.web.get(ref)
+                body = getattr(resp, "body", None)
+                if body is None:
+                    text = str(resp)
+                elif isinstance(body, (bytes, bytearray)):
+                    text = bytes(body).decode("utf-8", errors="replace")
+                else:
+                    text = str(body)
+                fetches.append(
+                    {
+                        "id": eid,
+                        "url": ref,
+                        "status": "ok",
+                        "excerpt": text[:FETCH_EXCERPT_CHARS],
+                    }
+                )
+            except Exception:
+                fetches.append({"id": eid, "url": ref, "status": "unavailable", "excerpt": ""})
+        else:
+            fetches.append({"id": eid, "url": ref, "status": "skipped", "excerpt": ""})
+    return fetches
+
+
+def build_consensus(evaluators, adversarial) -> dict:
+    """Deterministically derive the consensus block from evaluator outputs.
+
+    Shared by the leader (to publish an outcome) and the validator (to re-derive
+    it), so the two cannot drift apart.
+    """
+    tally = tally_evaluators(evaluators)
+    state, verdict, confidence_bp, review_required = classify_evaluation(tally, adversarial)
+    return {
+        "state": state,
+        "majority": tally["majority"],
+        "counts": tally["counts"],
+        "agreementRatio": tally["agreementRatio"],
+        "validCount": tally["validCount"],
+        "finalVerdict": verdict,
+        "confidenceBp": confidence_bp,
+        "reviewRequired": review_required,
+    }
+
+
+def evaluation_failure(error) -> dict:
+    """Standard fail-closed payload: EVALUATION_FAILED, never finalizable."""
+    return {
+        "ok": False,
+        "error": str(error)[:300],
+        "evaluators": [],
+        "adversarial": None,
+        "fetches": [],
+        "consensus": {
+            "state": STATE_EVALUATION_FAILED,
+            "majority": INCONCLUSIVE_LABEL,
+            "counts": {},
+            "agreementRatio": 0.0,
+            "validCount": 0,
+            "finalVerdict": VERDICT_NONE,
+            "confidenceBp": 0,
+            "reviewRequired": True,
+        },
+    }
+
+
 def build_evaluation_prompt(case: dict, fetches: list, role: str) -> str:
     evidence_lines = []
     for e in case.get("evidence", []):
@@ -278,7 +366,7 @@ def build_evaluation_prompt(case: dict, fetches: list, role: str) -> str:
                 type=e.get("evidenceType", ""),
                 source=e.get("source", ""),
                 ref=e.get("refUri", ""),
-                desc=(e.get("description") or "")[:300],
+                desc=(e.get("description") or "")[:EVIDENCE_DESC_CHARS],
             )
         )
     fetch_lines = []
@@ -288,7 +376,7 @@ def build_evaluation_prompt(case: dict, fetches: list, role: str) -> str:
                 "- {id} {url}: {excerpt}".format(
                     id=f.get("id", ""),
                     url=f.get("url", ""),
-                    excerpt=(f.get("excerpt") or "")[:1200],
+                    excerpt=(f.get("excerpt") or "")[:FETCH_PROMPT_CHARS],
                 )
             )
         else:
@@ -342,7 +430,7 @@ Respond ONLY with JSON matching:
         claimant=case.get("claimant", ""),
         respondent=case.get("respondent", ""),
         agreement_hash=case.get("agreementHash", ""),
-        description=(case.get("description") or "")[:2000],
+        description=(case.get("description") or "")[:DISPUTE_DESC_CHARS],
         evidence=("\n".join(evidence_lines) if evidence_lines else "- none"),
         fetches=("\n".join(fetch_lines) if fetch_lines else "- none fetched"),
     )
@@ -357,7 +445,7 @@ def build_adversarial_prompt(case: dict, fetches: list, evaluators: list) -> str
                 role=e.get("role", "?"),
                 verdict=e.get("verdict", "?"),
                 conf=e.get("confidence", 0),
-                reasoning=(e.get("reasoning") or "")[:500],
+                reasoning=(e.get("reasoning") or "")[:240],
             )
         )
     evidence_lines = []
@@ -367,7 +455,7 @@ def build_adversarial_prompt(case: dict, fetches: list, evaluators: list) -> str
                 id=e.get("id", ""),
                 type=e.get("evidenceType", ""),
                 ref=e.get("refUri", ""),
-                desc=(e.get("description") or "")[:200],
+                desc=(e.get("description") or "")[:EVIDENCE_DESC_CHARS],
             )
         )
     prompt = """You are the adversarial reviewer for AgentCourt dispute #{id}.
@@ -395,7 +483,7 @@ Respond ONLY with JSON matching:
 }}
 """.format(
         id=case.get("id", "?"),
-        description=(case.get("description") or "")[:2000],
+        description=(case.get("description") or "")[:DISPUTE_DESC_CHARS],
         evidence=("\n".join(evidence_lines) if evidence_lines else "- none"),
         evaluators=("\n".join(eval_lines) if eval_lines else "- none"),
     )
@@ -463,30 +551,24 @@ def _now_unix() -> int:
         return 0
 
 
-def substantive_match(a, b) -> bool:
-    """Compare two evaluation payloads on the substantive outcome, not free text."""
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return False
-    if bool(a.get("ok")) != bool(b.get("ok")):
-        return False
-    if not a.get("ok"):
-        # Both failed — agree on the failure marker.
-        return True
+def consensus_consistent(claimed, derived) -> bool:
+    """True when a claimed consensus block matches the one derived from the same
+    evaluator outputs.
 
-    ca = a.get("consensus") or {}
-    cb = b.get("consensus") or {}
-    if str(ca.get("state", "")) != str(cb.get("state", "")):
+    This is exact, not fuzzy: a leader that publishes a verdict its own evidence
+    does not support (wrong counts, inflated confidence, or a cleared
+    reviewRequired flag) is rejected deterministically.
+    """
+    if not isinstance(claimed, dict) or not isinstance(derived, dict):
         return False
-    if int(ca.get("finalVerdict", -1)) != int(cb.get("finalVerdict", -2)):
+    if str(claimed.get("state", "")) != str(derived.get("state", "")):
         return False
-    if int(ca.get("validCount", -1)) != int(cb.get("validCount", -2)):
+    if str(claimed.get("majority", "")) != str(derived.get("majority", "")):
         return False
-
-    ta = tally_evaluators(a.get("evaluators") or [])
-    tb = tally_evaluators(b.get("evaluators") or [])
-    if ta["majority"] != tb["majority"]:
-        return False
-    if abs(float(ta["agreementRatio"]) - float(tb["agreementRatio"])) > 0.34:
+    for key in ("finalVerdict", "validCount", "confidenceBp"):
+        if int(claimed.get(key, -1)) != int(derived.get(key, -2)):
+            return False
+    if bool(claimed.get("reviewRequired", True)) != bool(derived.get("reviewRequired", False)):
         return False
     return True
 
@@ -719,35 +801,7 @@ class AgentCourtCore(gl.Contract):
 
         def leader_fn():
             try:
-                fetches = []
-                for item in case["evidence"]:
-                    ref = str(item.get("refUri") or "")
-                    eid = "EVID-" + str(item.get("id", ""))
-                    if ref.startswith("http://") or ref.startswith("https://"):
-                        try:
-                            # web.get + explicit decode is lighter and more stable
-                            # than web.render for API/JSON evidence URLs.
-                            resp = gl.nondet.web.get(ref)
-                            body = getattr(resp, "body", None)
-                            if body is None:
-                                text = str(resp)
-                            elif isinstance(body, (bytes, bytearray)):
-                                text = bytes(body).decode("utf-8", errors="replace")
-                            else:
-                                text = str(body)
-                            fetches.append(
-                                {
-                                    "id": eid,
-                                    "url": ref,
-                                    "status": "ok",
-                                    "excerpt": text[:1500],
-                                }
-                            )
-                        except Exception:
-                            fetches.append({"id": eid, "url": ref, "status": "unavailable", "excerpt": ""})
-                    else:
-                        fetches.append({"id": eid, "url": ref, "status": "skipped", "excerpt": ""})
-
+                fetches = fetch_evidence(case)
                 evaluators = []
                 for role in EVALUATOR_ROLES:
                     prompt = build_evaluation_prompt(case, fetches, role)
@@ -759,7 +813,6 @@ class AgentCourtCore(gl.Contract):
                     if norm is not None:
                         evaluators.append(norm)
 
-                tally = tally_evaluators(evaluators)
                 adv_prompt = build_adversarial_prompt(case, fetches, evaluators)
                 try:
                     adv_raw = gl.nondet.exec_prompt(adv_prompt, response_format="json")
@@ -767,92 +820,78 @@ class AgentCourtCore(gl.Contract):
                     adv_raw = None
                 adversarial = normalize_adversarial(adv_raw)
 
-                state, verdict, confidence_bp, review_required = classify_evaluation(
-                    tally, adversarial
-                )
-                consensus = {
-                    "state": state,
-                    "majority": tally["majority"],
-                    "counts": tally["counts"],
-                    "agreementRatio": tally["agreementRatio"],
-                    "validCount": tally["validCount"],
-                    "finalVerdict": verdict,
-                    "confidenceBp": confidence_bp,
-                    "reviewRequired": review_required,
-                }
                 return {
                     "ok": True,
                     "evaluators": evaluators,
                     "adversarial": adversarial,
                     "fetches": fetches,
-                    "consensus": consensus,
+                    "consensus": build_consensus(evaluators, adversarial),
                 }
             except Exception as exc:
-                return {
-                    "ok": False,
-                    "error": str(exc)[:300],
-                    "evaluators": [],
-                    "adversarial": None,
-                    "fetches": [],
-                    "consensus": {
-                        "state": STATE_EVALUATION_FAILED,
-                        "majority": INCONCLUSIVE_LABEL,
-                        "counts": {},
-                        "agreementRatio": 0.0,
-                        "validCount": 0,
-                        "finalVerdict": VERDICT_NONE,
-                        "confidenceBp": 0,
-                        "reviewRequired": True,
-                    },
-                }
+                return evaluation_failure(str(exc))
 
         def validator_fn(leader_result):
+            """Cheap validator: re-derive deterministically, then re-check once.
+
+            1. Re-deriving the consensus from the leader's *own* evaluator
+               payloads must reproduce the consensus it claimed — pinning the
+               verdict, counts, confidence and reviewRequired, so a leader cannot
+               publish an outcome its evidence does not support.
+            2. One independent neutral evaluation must not reach the opposite
+               conclusion.
+
+            The step-2 prompt lives inline (rather than in a helper) because the
+            GenVM linter only accepts gl.nondet.* calls directly reachable from
+            the nondeterministic block.
+            """
             if not isinstance(leader_result, gl.vm.Return):
                 return False
-            mine = leader_fn()
-            return substantive_match(leader_result.calldata, mine)
+            payload = leader_result.calldata
+            if not isinstance(payload, dict) or not payload.get("ok"):
+                return False
+
+            derived = build_consensus(
+                payload.get("evaluators") or [], payload.get("adversarial")
+            )
+            if not consensus_consistent(payload.get("consensus"), derived):
+                return False
+
+            # Only a decisive consensus needs independent corroboration. Fails
+            # *open* below: the deterministic re-derivation already passed, so a
+            # transient LLM error must not manufacture a consensus failure.
+            if derived.get("state") != STATE_CONSENSUS:
+                return True
+            claimed = int(derived.get("finalVerdict", VERDICT_NONE))
+            if claimed not in (VERDICT_TRUE, VERDICT_FALSE):
+                return True
+            try:
+                fetches = fetch_evidence(case)
+                raw = gl.nondet.exec_prompt(
+                    build_evaluation_prompt(case, fetches, "neutral"),
+                    response_format="json",
+                )
+            except Exception:
+                return True
+            neutral = normalize_evaluator(raw, "neutral")
+            if neutral is None or neutral["verdict"] == INCONCLUSIVE_LABEL:
+                return True
+            opposite = REFUTED if claimed == VERDICT_TRUE else SUPPORTED
+            return neutral["verdict"] != opposite
 
         try:
-            evaluation = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+            # run_nondet, not the unsandboxed variant: the validator runs in a
+            # sandbox, so a validator error degrades to a clean disagreement
+            # instead of a VM-level crash that records no state at all.
+            evaluation = gl.vm.run_nondet(leader_fn, validator_fn)
         except Exception as exc:
-            evaluation = {
-                "ok": False,
-                "error": str(exc)[:300],
-                "evaluators": [],
-                "adversarial": None,
-                "fetches": [],
-                "consensus": {
-                    "state": STATE_EVALUATION_FAILED,
-                    "majority": INCONCLUSIVE_LABEL,
-                    "counts": {},
-                    "agreementRatio": 0.0,
-                    "validCount": 0,
-                    "finalVerdict": VERDICT_NONE,
-                    "confidenceBp": 0,
-                    "reviewRequired": True,
-                },
-            }
+            evaluation = evaluation_failure(str(exc))
 
         if not isinstance(evaluation, dict) or not evaluation.get("ok"):
-            evaluation = {
-                "ok": False,
-                "error": str((evaluation or {}).get("error", "evaluation failed"))[:300]
+            evaluation = evaluation_failure(
+                (evaluation or {}).get("error", "evaluation failed")
                 if isinstance(evaluation, dict)
-                else "evaluation failed",
-                "evaluators": [],
-                "adversarial": None,
-                "fetches": [],
-                "consensus": {
-                    "state": STATE_EVALUATION_FAILED,
-                    "majority": INCONCLUSIVE_LABEL,
-                    "counts": {},
-                    "agreementRatio": 0.0,
-                    "validCount": 0,
-                    "finalVerdict": VERDICT_NONE,
-                    "confidenceBp": 0,
-                    "reviewRequired": True,
-                },
-            }
+                else "evaluation failed"
+            )
 
         state = (evaluation.get("consensus") or {}).get("state", STATE_EVALUATION_FAILED)
         if state == STATE_CONSENSUS:

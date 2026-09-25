@@ -3,7 +3,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'intelligent-contracts'))
 
-# Install genlayer stub before any contract import.
-from tests.genlayer_stub import install  # noqa: E402
+# Unit tests run contracts against the lightweight stub in tests/genlayer_stub.py.
+# The gltest integration suite (tests/integration/) needs the REAL genlayer SDK,
+# so it sets AGENTCOURT_REAL_GENLAYER=1 to stop the stub shadowing it in sys.modules.
+if os.environ.get('AGENTCOURT_REAL_GENLAYER') != '1':
+    from tests.genlayer_stub import install  # noqa: E402
 
-install()
+    install()

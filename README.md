@@ -10,7 +10,7 @@ AgentCourt is a decentralized arbitration protocol that turns a machine-readable
 Claim → Evidence → Investigation → Independent Reasoning → Adversarial Review → Consensus → Verdict → Settlement
 ```
 
-Instead of a single LLM answer or a centralized moderator, four independent evaluator roles reason over the same evidence, an adversarial reviewer challenges the emerging majority, GenLayer validators re-run the pipeline and accept only matching substantive outcomes, and the final verdict is derived on-chain — never supplied by a caller.
+Instead of a single LLM answer or a centralized moderator, four independent evaluator roles reason over the same evidence, an adversarial reviewer challenges the emerging majority, GenLayer validators re-derive the consensus exactly and independently re-check decisive verdicts, and the final verdict is derived on-chain — never supplied by a caller.
 
 ---
 
@@ -30,7 +30,7 @@ AgentCourt provides **recourse** as a programmable, transparent primitive:
 | Pain today | AgentCourt answer |
 |---|---|
 | "The AI said so" with no process | Full evidence → evaluators → adversarial → consensus trail on-chain |
-| One LLM call is trivially gamed | 4 roles + adversarial + validator re-execution (`run_nondet_unsafe`) |
+| One LLM call is trivially gamed | 4 roles + adversarial + sandboxed validator check (`run_nondet`) |
 | Caller can submit a favorable verdict | **Caller input ≠ final verdict** — `finalize_verdict(dispute_id)` takes no verdict |
 | Uncertain cases auto-settle unsafely | Fail-closed states: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` freeze settlement |
 | Escrow can't consume AI opinions | Machine-readable verdict: `{verdict, confidence, resolution, reviewRequired}` |
@@ -101,11 +101,12 @@ Full method tables, contract API, and error handling: [`docs/DEVELOPER_GUIDE.md`
 ```text
 AgentCourtCore (Python IC)
   ├── disputes, evidence, evaluations, verdicts (TreeMap state)
-  ├── request_evaluation → gl.vm.run_nondet_unsafe
-  │      ├── gl.nondet.web.render      (live HTTP evidence fetch)
+  ├── request_evaluation → gl.vm.run_nondet
+  │      ├── gl.nondet.web.get       (live HTTP evidence fetch)
   │      ├── gl.nondet.exec_prompt × 4 (neutral / claimant / respondent / auditor)
   │      └── gl.nondet.exec_prompt     (adversarial review)
-  │            validators re-run and compare substantive outcome
+  │            validators re-derive the consensus exactly
+  │            and independently re-check decisive verdicts
   ├── finalize_verdict(dispute_id)     # NO verdict parameter
   └── execute_settlement(dispute_id)   # emits to ResolutionManager
 
@@ -161,7 +162,7 @@ agentcourt/
 
 ## Quality & verification
 
-- **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.render`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
+- **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.get`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
 - **Tests:** 39 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, timestamps, Keccak commitments) + 5 vitest tests.
 - **CI:** `genvm-lint check` on both ICs, `pytest`, frontend build (`.github/workflows/ci.yml`).
 - **Audit trail:** [`AUDIT.md`](AUDIT.md) documents the verbatim GenLayer Portal rejection, every defect, and the remediation.

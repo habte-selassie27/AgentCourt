@@ -1814,7 +1814,7 @@ Responsible for:
 creating disputes
 submitting evidence
 starting investigations
-running nondeterministic evaluation under gl.vm.run_nondet_unsafe
+running nondeterministic evaluation under gl.vm.run_nondet
 running 4 LLM evaluator roles + adversarial review via gl.nondet.exec_prompt
 finalizing verdicts from the stored evaluation (dispute_id only)
 emitting settlement / appeal intents to ResolutionManager

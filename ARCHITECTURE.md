@@ -9,11 +9,11 @@ AgentCourt is a decentralized dispute resolution protocol built exclusively on G
 ```
 AgentCourtCore (Python IC)
   ├── disputes, evidence, evaluations, verdicts (local TreeMap state)
-  ├── request_evaluation → gl.vm.run_nondet_unsafe
-  │     ├── gl.nondet.web.render (http evidence)
+  ├── request_evaluation → gl.vm.run_nondet
+  │     ├── gl.nondet.web.get (http evidence)
   │     ├── gl.nondet.exec_prompt × 4 independent roles
   │     └── gl.nondet.exec_prompt (adversarial review)
-  │           validators re-run and compare substantive outcome
+  │           validators re-derive consensus exactly + independent neutral re-check
   ├── finalize_verdict(dispute_id)   # NO verdict parameter
   └── execute_settlement(dispute_id) → emits to ResolutionManager
 
@@ -66,5 +66,5 @@ Evidence is stored on-chain in AgentCourtCore with type classification, source t
 1. Four independent LLM roles evaluate the same evidence package
 2. Adversarial reviewer challenges the emerging majority
 3. Deterministic majority tally + agreement threshold (0.6) classifies the state
-4. GenLayer validators independently re-run the pipeline and accept only matching substantive outcomes (`substantive_match`)
+4. GenLayer validators (sandboxed via `run_nondet`) re-derive the consensus block exactly (`consensus_consistent`) and corroborate decisive TRUE/FALSE verdicts with an independent neutral re-evaluation
 5. `finalize_verdict` commits the derived verdict — never a caller argument

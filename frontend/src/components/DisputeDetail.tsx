@@ -174,8 +174,17 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
 
   const consensusData = computeConsensus(evaluators);
 
+  // The contract gates start_investigation / request_evaluation / open_appeal on
+  // `_is_party_or_owner`. Checking status + signer alone enables buttons that the
+  // contract will reject, so mirror that rule here.
+  const signer = getCourt().getSigner();
+  const signerLc = signer ? signer.toLowerCase() : null;
+  const isDisputeParty =
+    signerLc !== null &&
+    (dispute.claimant.toLowerCase() === signerLc || dispute.respondent.toLowerCase() === signerLc);
+
   const canInvestigate =
-    (status === 'EVIDENCE_COLLECTION' || status === 'OPEN') && Boolean(getCourt().getSigner());
+    (status === 'EVIDENCE_COLLECTION' || status === 'OPEN') && isDisputeParty;
   const canEvaluate =
     [
       'INVESTIGATION',
@@ -186,13 +195,14 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
       'INCONCLUSIVE',
       'DISPUTED',
       'APPEALED',
-    ].includes(status) && Boolean(getCourt().getSigner());
+    ].includes(status) && isDisputeParty;
+  // finalize_verdict / execute_settlement have no party check on-chain.
   const canFinalize =
-    ['CONSENSUS', 'INCONCLUSIVE', 'DISPUTED'].includes(status) && Boolean(getCourt().getSigner());
+    ['CONSENSUS', 'INCONCLUSIVE', 'DISPUTED'].includes(status) && Boolean(signer);
   const canSettle =
-    status === 'VERDICT' && verdict !== null && !verdict.reviewRequired && Boolean(getCourt().getSigner());
+    status === 'VERDICT' && verdict !== null && !verdict.reviewRequired && Boolean(signer);
   const canAppeal =
-    (status === 'VERDICT' || status === 'CLOSED') && Boolean(getCourt().getSigner());
+    (status === 'VERDICT' || status === 'CLOSED') && isDisputeParty;
 
   const tabs: { key: DetailTab; label: string; visible: boolean }[] = [
     { key: 'timeline', label: 'Timeline', visible: true },
@@ -283,6 +293,13 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
             {actionBusy === 'appeal' ? 'Opening…' : 'Open Appeal'}
           </button>
         </div>
+        {signer && !isDisputeParty && (
+          <div style={{ marginTop: '0.75rem', color: 'var(--warning, #f59e0b)', fontSize: '0.9rem' }}>
+            This wallet is not a party to this dispute, so the contract will reject
+            start/evaluate/appeal. Switch to {shortAddress(dispute.claimant)} (claimant) or{' '}
+            {shortAddress(dispute.respondent)} (respondent).
+          </div>
+        )}
         {actionError && (
           <div style={{ marginTop: '0.75rem', color: 'var(--danger)', fontSize: '0.9rem' }}>{actionError}</div>
         )}
