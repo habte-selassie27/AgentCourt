@@ -8,6 +8,20 @@ import { createClient } from 'genlayer-js';
 import { studionet } from 'genlayer-js/chains';
 import { ExecutionResult, TransactionStatus } from 'genlayer-js/types';
 
+export const GENLAYER_EXPLORER_URL = 'https://explorer-studio.genlayer.com';
+
+const createStudionetChain = (rpcUrl: string) => ({
+  ...studionet,
+  rpcUrls: { default: { http: [rpcUrl] } },
+  blockExplorers: {
+    ...studionet.blockExplorers,
+    default: {
+      name: 'GenLayer Explorer Studio',
+      url: GENLAYER_EXPLORER_URL,
+    },
+  },
+});
+
 export class GenlayerRpcError extends Error {
   readonly code: number | undefined;
   constructor(message: string, code?: number) {
@@ -88,10 +102,7 @@ export class GenLayerClient {
   constructor(readonly rpcUrl: string) {
     this.client = createClient({
       endpoint: rpcUrl,
-      chain: {
-        ...studionet,
-        rpcUrls: { default: { http: [rpcUrl] } },
-      },
+      chain: createStudionetChain(rpcUrl),
     });
   }
 
@@ -100,10 +111,7 @@ export class GenLayerClient {
     this.writeAddress = address;
     this.writeClient = createClient({
       endpoint: this.rpcUrl,
-      chain: {
-        ...studionet,
-        rpcUrls: { default: { http: [this.rpcUrl] } },
-      },
+      chain: createStudionetChain(this.rpcUrl),
       account: address,
       provider: ethereum as any,
     } as any);

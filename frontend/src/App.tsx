@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DisputeDashboard } from './components/DisputeDashboard';
 import { DisputeDetail } from './components/DisputeDetail';
 import { CreateDisputeForm } from './components/CreateDisputeForm';
-import { getCourt } from './sdk';
+import { GENLAYER_EXPLORER_URL, getCourt } from './sdk';
 
 type View = 'dashboard' | 'create' | 'detail';
 
@@ -123,7 +123,7 @@ function App() {
             chainName: 'GenLayer Studionet',
             nativeCurrency: { name: 'GEN', symbol: 'GEN', decimals: 18 },
             rpcUrls: ['https://studio.genlayer.com/api'],
-            blockExplorerUrls: ['https://explorer-studio.genlayer.com'],
+            blockExplorerUrls: [GENLAYER_EXPLORER_URL],
           }],
         });
       }
@@ -215,7 +215,7 @@ function App() {
       <footer className="footer">
         <span>AgentCourt · GenLayer Studionet (61999) · Intelligent Contracts, no Solidity path</span>
         <span>
-          <a href="https://explorer-studio.genlayer.com" target="_blank" rel="noreferrer">Explorer</a>
+          <a href={GENLAYER_EXPLORER_URL} target="_blank" rel="noreferrer">Explorer</a>
           {' · '}
           <a href="https://studio.genlayer.com/api" target="_blank" rel="noreferrer">RPC</a>
         </span>

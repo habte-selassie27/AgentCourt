@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getCourt } from '../sdk';
+import { GENLAYER_EXPLORER_URL, getCourt } from '../sdk';
 import type { DisputeRecord } from '../sdk';
 import { describeError } from '../sdk/errors';
 import { formatStake, formatDateTime, shortAddress, getStatusClass, disputeIdLabel, isActive, isResolved } from '../dispute';
@@ -155,7 +155,7 @@ export function DisputeDashboard({ onViewDispute, onCreateDispute }: DisputeDash
               </button>
               <a
                 className="btn btn-secondary"
-                href="https://explorer-studio.genlayer.com"
+                href={GENLAYER_EXPLORER_URL}
                 target="_blank"
                 rel="noreferrer"
               >
