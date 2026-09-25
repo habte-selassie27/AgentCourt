@@ -41,6 +41,7 @@ from core.agentcourt_core import (  # type: ignore
     build_evaluation_prompt,
     classify_evaluation,
     consensus_consistent,
+    normalize_adversarial,
     normalize_evaluator,
     resolution_for_verdict,
     tally_evaluators,
@@ -117,7 +118,7 @@ def stub_nondet(monkeypatch, evaluator_verdicts, adversarial=None):
 
     def fake_exec_prompt(prompt, **kwargs):
         if "DISPROVE the emerging evaluator consensus" in prompt:
-            return adversarial
+            return json.dumps(adversarial)
         for role, v in by_role.items():
             if f"Role perspective: {role}" in prompt:
                 return {
@@ -276,6 +277,29 @@ class TestEvidenceDeterminesEvaluation:
         assert a["agreementRatio"] == 1.0
         assert b["distinctVerdicts"] == 2
         assert b["agreementRatio"] < 1.0
+
+    def test_nondet_payload_uses_calldata_safe_numeric_values(self):
+        derived = build_consensus(
+            sample_evaluators([SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED]), None
+        )
+        adversarial = normalize_adversarial(
+            {
+                "challenges": [
+                    {
+                        "type": "source",
+                        "description": "A source needs checking.",
+                        "severity": 0.5,
+                    }
+                ],
+                "verdict_upheld": True,
+                "reasoning": "The conclusion is sufficiently supported.",
+                "confidence_adjustment": 0,
+            }
+        )
+        assert derived["agreementRatio"] == "1.0"
+        assert isinstance(derived["agreementRatio"], str)
+        assert adversarial["challenges"][0]["severity"] == "0.5"
+        assert isinstance(adversarial["challenges"][0]["severity"], str)
 
 
 # ---------------------------------------------------------------------------

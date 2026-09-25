@@ -172,7 +172,7 @@ def normalize_adversarial(raw):
             {
                 "type": str(item.get("type", "assumption"))[:64],
                 "description": str(item.get("description", ""))[:400],
-                "severity": severity,
+                "severity": str(severity),
                 "affectsVerdict": bool(item.get("affectsVerdict", item.get("affects_verdict", False))),
             }
         )
@@ -328,7 +328,7 @@ def build_consensus(evaluators, adversarial) -> dict:
         "state": state,
         "majority": tally["majority"],
         "counts": tally["counts"],
-        "agreementRatio": tally["agreementRatio"],
+        "agreementRatio": str(tally["agreementRatio"]),
         "validCount": tally["validCount"],
         "finalVerdict": verdict,
         "confidenceBp": confidence_bp,
@@ -348,7 +348,7 @@ def evaluation_failure(error) -> dict:
             "state": STATE_EVALUATION_FAILED,
             "majority": INCONCLUSIVE_LABEL,
             "counts": {},
-            "agreementRatio": 0.0,
+            "agreementRatio": 0,
             "validCount": 0,
             "finalVerdict": VERDICT_NONE,
             "confidenceBp": 0,
@@ -815,7 +815,9 @@ class AgentCourtCore(gl.Contract):
 
                 adv_prompt = build_adversarial_prompt(case, fetches, evaluators)
                 try:
-                    adv_raw = gl.nondet.exec_prompt(adv_prompt, response_format="json")
+                    adv_raw = gl.nondet.exec_prompt(adv_prompt)
+                    if isinstance(adv_raw, str):
+                        adv_raw = json.loads(adv_raw)
                 except Exception:
                     adv_raw = None
                 adversarial = normalize_adversarial(adv_raw)
