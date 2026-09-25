@@ -105,8 +105,8 @@ vercel --prod
 
 | Contract | Address | Tx / notes |
 |---|---|---|
-| ResolutionManager | `0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF` | deployed via `scripts/deploy/deploy.sh`; `set_core` **wired** (ACCEPTED) |
-| AgentCourtCore | `0x9aBcF35B18807d764166FA74524036e855faCbF6` | deployed via `scripts/deploy/deploy.sh` (post-`run_nondet` fix); owner `0x5B36…4c89` |
+| ResolutionManager | `0x4c63c9C105AD80A905456c986A027BDA46F9687a` | deployed via `scripts/deploy/deploy.sh`; `set_core` **wired** (ACCEPTED) |
+| AgentCourtCore | `0xeFc4318024F63ca06CC138B354D6539c9841A3B4` | deployed via `scripts/deploy/deploy.sh` (post-`run_nondet` + calldata-safe serialization fixes); owner `0x5B36…4c89` |
 
 Active CLI account: `rabby` `0x5b3661c576c7001e6d6279c67f3779705d334c89` — **is** the manager owner (`set_core` callable from the CLI).
 
@@ -244,8 +244,8 @@ async function checkHealth() {
 ```
 
 ### Explorer Links
-- AgentCourtCore: `0x9aBcF35B18807d764166FA74524036e855faCbF6`
-- ResolutionManager: `0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF`
+- AgentCourtCore: `0xeFc4318024F63ca06CC138B354D6539c9841A3B4`
+- ResolutionManager: `0x4c63c9C105AD80A905456c986A027BDA46F9687a`
 - DisputeRegistry: removed from codebase (legacy: `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4`)
 
 ## Alerting

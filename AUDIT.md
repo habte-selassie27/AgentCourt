@@ -131,7 +131,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 
 ## Remaining Issues
 
-1. **Studionet current pair (deploy.sh, post-`run_nondet` fix)** — `ResolutionManager` `0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF`, `AgentCourtCore` `0x9aBcF35B18807d764166FA74524036e855faCbF6`. Owner `0x5B36…4c89` (= active CLI account `rabby`). **`set_core` wired** (ACCEPTED). Superseded manual Studio pair: Core `0xEC3d5e53…2578` / Manager `0xb3f14B55…E530` (manager's one-time `set_core` taken by the old core). Older superseded pairs: CLI Core `0x88D6013F…5685` / Manager `0xA0F4D59b…0525`; Core `0x7C696ab6…4a47` / Manager `0x94ea120e…329d`.
+1. **Studionet current pair (deploy.sh, post-`run_nondet` and calldata-safe serialization fixes)** — `ResolutionManager` `0x4c63c9C105AD80A905456c986A027BDA46F9687a`, `AgentCourtCore` `0xeFc4318024F63ca06CC138B354D6539c9841A3B4`. Owner `0x5B36…4c89` (= active CLI account `rabby`). **`set_core` wired** (ACCEPTED). Superseded pairs include Core `0xC84a76b2…B4cbD` / Manager `0x6E2aabaf…e72a` (serialization fix, adversarial parser fallback), Core `0x9aBcF35B…aCbF6` / Manager `0x2e9f5e39…D29BF`, and the manual Studio pair Core `0xEC3d5e53…2578` / Manager `0xb3f14B55…E530`.
 2. **No private keys in git history** — `.env` is gitignored and has never been committed (`git log --all -- .env` is empty). The local `.env` private key was redacted to a placeholder; rotate it anyway before any production use.
 3. **Stake/bond economic enforcement** is metadata-level (recorded amounts); real fund custody needs a GenLayer value-transfer / escrow design beyond this remediation.
 4. **LLM cost/latency** for `request_evaluation` is non-trivial (4+ prompts per run); cache or reduce roles for high-volume demos.
