@@ -39,8 +39,8 @@ AgentCourt provides **recourse** as a programmable, transparent primitive:
 
 | Contract | Address |
 |---|---|
-| **AgentCourtCore** | [`0xEC3d5e5375823F936d6Adb2F4541aa8966672578`](https://explorer-studio.genlayer.com/address/0xEC3d5e5375823F936d6Adb2F4541aa8966672578) |
-| **ResolutionManager** | [`0xb3f14B5565a4342dc0c111AA8C3674de42B0E530`](https://explorer-studio.genlayer.com/address/0xb3f14B5565a4342dc0c111AA8C3674de42B0E530) |
+| **AgentCourtCore** | [`0x9aBcF35B18807d764166FA74524036e855faCbF6`](https://explorer-studio.genlayer.com/address/0x9aBcF35B18807d764166FA74524036e855faCbF6) |
+| **ResolutionManager** | [`0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF`](https://explorer-studio.genlayer.com/address/0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF) |
 
 `set_core` **must be wired once** by the manager owner (owner of this deployment: `0x5B36…4c89`). There is **no Solidity path** — both contracts are Python GenLayer Intelligent Contracts.
 

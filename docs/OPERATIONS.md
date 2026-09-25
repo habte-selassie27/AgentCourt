@@ -105,15 +105,17 @@ vercel --prod
 
 | Contract | Address | Tx / notes |
 |---|---|---|
-| ResolutionManager | `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530` | manually deployed via Studio; `set_core` **pending** (owner must call) |
-| AgentCourtCore | `0xEC3d5e5375823F936d6Adb2F4541aa8966672578` | manually deployed via Studio; owner `0x5B36…4c89` |
+| ResolutionManager | `0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF` | deployed via `scripts/deploy/deploy.sh`; `set_core` **wired** (ACCEPTED) |
+| AgentCourtCore | `0x9aBcF35B18807d764166FA74524036e855faCbF6` | deployed via `scripts/deploy/deploy.sh` (post-`run_nondet` fix); owner `0x5B36…4c89` |
 
-Active CLI account: `rabby` `0x04e0353b7218b66d6803725ce7342e6e1225db1b` (not owner — cannot call `set_core`).
+Active CLI account: `rabby` `0x5b3661c576c7001e6d6279c67f3779705d334c89` — **is** the manager owner (`set_core` callable from the CLI).
 
 ### Orphan / failed deploys (do not use)
 
 | Address | What it is |
 |---|---|
+| `0xEC3d5e5375823F936d6Adb2F4541aa8966672578` | Prior current core (pre-`run_nondet` fix); superseded by redeploy |
+| `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530` | Prior current manager (`set_core` taken by old core); superseded by redeploy |
 | `0xBa2e6a6Eb90B543E8F6e65cfeeB606c59577677B` | Prior current core; superseded by redeploy |
 | `0xEe3406BBF390afcfE6423a6f19815Ee0AE9125Ea` | Prior current manager; superseded by redeploy |
 | `0xA95331FD97E9D43CF0A3869E36F6C3E40C1b9F31` | Core deploy failed (`Address(Address)` TypeError) — not on chain |
@@ -242,8 +244,8 @@ async function checkHealth() {
 ```
 
 ### Explorer Links
-- AgentCourtCore: `0xEC3d5e5375823F936d6Adb2F4541aa8966672578`
-- ResolutionManager: `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530`
+- AgentCourtCore: `0x9aBcF35B18807d764166FA74524036e855faCbF6`
+- ResolutionManager: `0x2e9f5e39fCE3F5b9769bedFE2C1A6578EebD29BF`
 - DisputeRegistry: removed from codebase (legacy: `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4`)
 
 ## Alerting
