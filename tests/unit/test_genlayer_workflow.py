@@ -43,6 +43,7 @@ from core.agentcourt_core import (  # type: ignore
     consensus_consistent,
     normalize_adversarial,
     normalize_evaluator,
+    parse_json_object,
     resolution_for_verdict,
     tally_evaluators,
 )
@@ -300,6 +301,13 @@ class TestEvidenceDeterminesEvaluation:
         assert isinstance(derived["agreementRatio"], str)
         assert adversarial["challenges"][0]["severity"] == "0.5"
         assert isinstance(adversarial["challenges"][0]["severity"], str)
+
+    def test_json_parser_accepts_fenced_and_surrounded_objects(self):
+        payload = {"verdict_upheld": True, "confidence_adjustment": 0}
+        assert parse_json_object(json.dumps(payload)) == payload
+        assert parse_json_object("```json\n" + json.dumps(payload) + "\n```") == payload
+        assert parse_json_object("Review result:\n" + json.dumps(payload) + "\nDone") == payload
+        assert parse_json_object("not json") is None
 
 
 # ---------------------------------------------------------------------------

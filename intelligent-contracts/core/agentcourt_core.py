@@ -148,6 +148,26 @@ def normalize_evaluator(raw, role: str):
     }
 
 
+def parse_json_object(raw):
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text[:4].lower() == "json":
+            text = text[4:].lstrip()
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text[start:])
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def normalize_adversarial(raw):
     if not isinstance(raw, dict):
         return {
@@ -815,9 +835,7 @@ class AgentCourtCore(gl.Contract):
 
                 adv_prompt = build_adversarial_prompt(case, fetches, evaluators)
                 try:
-                    adv_raw = gl.nondet.exec_prompt(adv_prompt)
-                    if isinstance(adv_raw, str):
-                        adv_raw = json.loads(adv_raw)
+                    adv_raw = parse_json_object(gl.nondet.exec_prompt(adv_prompt))
                 except Exception:
                     adv_raw = None
                 adversarial = normalize_adversarial(adv_raw)
