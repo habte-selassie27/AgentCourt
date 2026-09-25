@@ -10,6 +10,9 @@ import { ExecutionResult, TransactionStatus } from 'genlayer-js/types';
 
 export const GENLAYER_EXPLORER_URL = 'https://explorer-studio.genlayer.com';
 
+/** Canonical tx link — AgentCourt surfaces explorer-studio links and nothing else. */
+export const explorerTxUrl = (hash: string): string => `${GENLAYER_EXPLORER_URL}/tx/${hash}`;
+
 const createStudionetChain = (rpcUrl: string) => ({
   ...studionet,
   rpcUrls: { default: { http: [rpcUrl] } },

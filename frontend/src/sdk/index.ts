@@ -16,7 +16,7 @@ export function getCourt(): AgentCourt {
 
 export { AgentCourt, CONFIDENCE_DENOMINATOR } from './agentcourt';
 export { describeError } from './errors';
-export { ConsensusFailedError, GENLAYER_EXPLORER_URL, TransactionPendingError } from './genlayer';
+export { ConsensusFailedError, GENLAYER_EXPLORER_URL, TransactionPendingError, explorerTxUrl } from './genlayer';
 export type { FriendlyError } from './errors';
 export type {
   ConsensusRecord,
@@ -27,6 +27,7 @@ export type {
   EvaluationAdversarial,
   EvaluationFetch,
   EvaluationConsensus,
+  TxLink,
   VerdictRecord,
 } from './agentcourt';
 export type {

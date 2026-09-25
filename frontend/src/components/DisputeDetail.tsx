@@ -35,7 +35,7 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionNote, setActionNote] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<{ text: string; url?: string } | null>(null);
   const [actionWarning, setActionWarning] = useState<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -92,7 +92,7 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
         return;
       }
       await fn();
-      setActionNote(done);
+      setActionNote({ text: done, url: getCourt().getTxLinks(disputeId)[0]?.url });
       await loadData();
     } catch (err: unknown) {
       const friendly = describeError(err);
@@ -179,6 +179,8 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
   // contract will reject, so mirror that rule here.
   const signer = getCourt().getSigner();
   const signerLc = signer ? signer.toLowerCase() : null;
+  // Session-scoped: only shown when this page load created the dispute.
+  const createTx = getCourt().getTxLinks(disputeId, 'create_dispute')[0];
   const isDisputeParty =
     signerLc !== null &&
     (dispute.claimant.toLowerCase() === signerLc || dispute.respondent.toLowerCase() === signerLc);
@@ -227,6 +229,17 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           <span className="status-badge" style={{ background: 'rgba(34, 197, 94, 0.2)', color: 'var(--success)' }}>
             ON-CHAIN
           </span>
+          {createTx && (
+            <a
+              href={createTx.url}
+              target="_blank"
+              rel="noreferrer"
+              title={createTx.hash}
+              style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}
+            >
+              Creation tx ↗
+            </a>
+          )}
         </div>
       </div>
 
@@ -309,7 +322,17 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           </div>
         )}
         {actionNote && (
-          <div style={{ marginTop: '0.75rem', color: 'var(--success)', fontSize: '0.9rem' }}>{actionNote}</div>
+          <div style={{ marginTop: '0.75rem', color: 'var(--success)', fontSize: '0.9rem' }}>
+            {actionNote.text}
+            {actionNote.url && (
+              <>
+                {' · '}
+                <a href={actionNote.url} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+                  View transaction ↗
+                </a>
+              </>
+            )}
+          </div>
         )}
         {evaluation && (
           <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -407,6 +430,8 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
               disputeId={disputeId}
               onSubmitted={() => {
                 setShowEvidenceForm(false);
+                const evidenceTx = getCourt().getTxLinks(disputeId, 'submit_evidence')[0];
+                setActionNote({ text: 'Evidence submitted on-chain.', url: evidenceTx?.url });
                 void loadData();
               }}
               onCancel={() => setShowEvidenceForm(false)}

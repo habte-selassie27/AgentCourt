@@ -1,4 +1,4 @@
-import { ContractExecutionError, GenLayerClient } from './genlayer';
+import { ContractExecutionError, GenLayerClient, explorerTxUrl } from './genlayer';
 
 /** Verdict confidence is stored in basis points: 10000 === 100.00%. */
 export const CONFIDENCE_DENOMINATOR = 10000;
@@ -280,12 +280,21 @@ function mapEvaluation(e: any): EvaluationRecord | null {
   };
 }
 
+/** A write tx sent this session, paired with its explorer-studio link. */
+export interface TxLink {
+  method: string;
+  hash: string;
+  url: string;
+}
+
 export class AgentCourt {
   readonly config: AgentCourtConfig;
   private gl: GenLayerClient;
   private connected = false;
   private deployedChecked = false;
   private ethereum: unknown | null = null;
+  /** Write txs from this session (in-memory only) so the UI can link them. */
+  private readonly txLog: Array<{ disputeId: bigint; method: string; hash: string }> = [];
 
   constructor(config: AgentCourtConfig) {
     this.config = config;
@@ -377,6 +386,25 @@ export class AgentCourt {
     this.requireConnected();
     await this.ensureWriteAccountMatches();
     return this.gl.genWrite(this.config.coreAddress, method, args, { value, ...wait });
+  }
+
+  /** Record a write so the UI can link it — always on explorer-studio. */
+  private noteTx(disputeId: bigint, method: string, hash: string): void {
+    this.txLog.push({ disputeId, method, hash });
+    if (this.txLog.length > 100) this.txLog.shift();
+  }
+
+  /**
+   * Explorer-studio links for writes against `disputeId` sent this session,
+   * newest first. Filter with `method` (e.g. 'create_dispute'). Session-scoped:
+   * a page reload clears the log.
+   */
+  getTxLinks(disputeId: bigint, method?: string): TxLink[] {
+    return this.txLog
+      .filter((t) => t.disputeId === disputeId && (method === undefined || t.method === method))
+      .slice()
+      .reverse()
+      .map(({ method: m, hash }) => ({ method: m, hash, url: explorerTxUrl(hash) }));
   }
 
   // ---------------------------------------------------------------------------
@@ -501,7 +529,7 @@ export class AgentCourt {
   }): Promise<bigint> {
     const before = await this.getDisputeCount();
     // Stake is metadata only — do not attach value (avoids locking GEN / non-payable failures).
-    await this.writeCore(
+    const hash = await this.writeCore(
       'create_dispute',
       [
         params.respondent,
@@ -520,6 +548,7 @@ export class AgentCourt {
         `Dispute count did not increase (before=${before}, after=${after}).`,
       );
     }
+    this.noteTx(after, 'create_dispute', hash);
     return after;
   }
 
@@ -547,7 +576,7 @@ export class AgentCourt {
     opts: { wait?: boolean } = {},
   ): Promise<bigint | null> {
     const wait = opts.wait !== false;
-    await this.writeCore(
+    const hash = await this.writeCore(
       'submit_evidence',
       [
         Number(params.disputeId),
@@ -560,6 +589,7 @@ export class AgentCourt {
       BigInt(0),
       { wait },
     );
+    this.noteTx(params.disputeId, 'submit_evidence', hash);
     if (!wait) {
       return null;
     }
@@ -599,7 +629,7 @@ export class AgentCourt {
     const before = await this.getDisputeEvidenceIds(disputeId);
 
     for (const item of items) {
-      await this.writeCore(
+      const hash = await this.writeCore(
         'submit_evidence',
         [
           Number(item.disputeId),
@@ -612,6 +642,7 @@ export class AgentCourt {
         BigInt(0),
         { wait: false },
       );
+      this.noteTx(item.disputeId, 'submit_evidence', hash);
     }
 
     const target = before.length + items.length;
@@ -631,17 +662,19 @@ export class AgentCourt {
   }
 
   async startInvestigation(disputeId: bigint): Promise<void> {
-    await this.writeCore('start_investigation', [Number(disputeId)]);
+    const hash = await this.writeCore('start_investigation', [Number(disputeId)]);
+    this.noteTx(disputeId, 'start_investigation', hash);
   }
 
   /** Kick off nondeterministic evaluation + validator consensus. No verdict args. */
   async requestEvaluation(disputeId: bigint): Promise<void> {
     // LLM + adversarial + validator consensus regularly exceeds 30s / even 3 min.
     // Budget ≈ 10 minutes (600 × 1s) before surfacing TransactionPendingError.
-    await this.writeCore('request_evaluation', [Number(disputeId)], BigInt(0), {
+    const hash = await this.writeCore('request_evaluation', [Number(disputeId)], BigInt(0), {
       waitRetries: 600,
       waitIntervalMs: 1_000,
     });
+    this.noteTx(disputeId, 'request_evaluation', hash);
   }
 
   /**
@@ -649,15 +682,18 @@ export class AgentCourt {
    * Intentionally has NO verdict/confidence/resolution parameters.
    */
   async finalizeVerdict(disputeId: bigint): Promise<void> {
-    await this.writeCore('finalize_verdict', [Number(disputeId)]);
+    const hash = await this.writeCore('finalize_verdict', [Number(disputeId)]);
+    this.noteTx(disputeId, 'finalize_verdict', hash);
   }
 
   async openAppeal(disputeId: bigint, reason: string): Promise<void> {
-    await this.writeCore('open_appeal', [Number(disputeId), reason]);
+    const hash = await this.writeCore('open_appeal', [Number(disputeId), reason]);
+    this.noteTx(disputeId, 'open_appeal', hash);
   }
 
   async executeSettlement(disputeId: bigint): Promise<void> {
-    await this.writeCore('execute_settlement', [Number(disputeId)]);
+    const hash = await this.writeCore('execute_settlement', [Number(disputeId)]);
+    this.noteTx(disputeId, 'execute_settlement', hash);
   }
 
   async waitForVerdict(disputeId: bigint, timeoutMs = 300_000, pollIntervalMs = 5_000) {

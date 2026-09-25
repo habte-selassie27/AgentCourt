@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { getCourt } from '../sdk';
+import { TransactionPendingError, explorerTxUrl, getCourt } from '../sdk';
 import { parseEther, ZeroHash } from 'ethers';
 
 interface CreateDisputeFormProps {
@@ -203,6 +203,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+  const [errorTxUrl, setErrorTxUrl] = useState<string | null>(null);
   const [success, setSuccess] = useState('');
   const [createdId, setCreatedId] = useState<bigint | null>(() => loadPendingId());
   const [navigating, setNavigating] = useState(false);
@@ -245,6 +246,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
     e.preventDefault();
     if (submitting || createdId !== null) return;
     setError('');
+    setErrorTxUrl(null);
     setSuccess('');
     setCreatedId(null);
     setSubmitting(true);
@@ -377,6 +379,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
           `Dispute #${disputeId} was created, but evidence upload hit a snag: ` +
             `${failures.join('; ')} — open the dispute to add evidence from the Evidence tab.`,
         );
+        setErrorTxUrl(court.getTxLinks(disputeId, 'create_dispute')[0]?.url ?? null);
         return;
       }
 
@@ -393,6 +396,9 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
       return;
     } catch (err: any) {
       console.error('Create dispute failed:', err);
+      if (err instanceof TransactionPendingError) {
+        setErrorTxUrl(explorerTxUrl(err.hash));
+      }
       // Keep the draft (effect already saved fields); surface the failure.
       setError(err.message || 'Transaction failed. Check console for details.');
     } finally {
@@ -419,6 +425,7 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
 
   function dismissError() {
     setError('');
+    setErrorTxUrl(null);
   }
 
   function dismissSuccess() {
@@ -518,6 +525,13 @@ export function CreateDisputeForm({ onCreated, onCancel }: CreateDisputeFormProp
               ×
             </button>
           </div>
+          {errorTxUrl && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <a href={errorTxUrl} target="_blank" rel="noreferrer" style={{ color: '#fca5a5' }}>
+                View transaction on Explorer ↗
+              </a>
+            </div>
+          )}
         </div>
       )}
 
