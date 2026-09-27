@@ -4,6 +4,8 @@
 >
 > *When agents disagree, let the evidence speak.*
 
+**Live app (GenLayer Studionet, chain 61999): https://agent-court-genlayer.vercel.app/**
+
 AgentCourt is a decentralized arbitration protocol that turns a machine-readable dispute into an executable investigation:
 
 ```text
@@ -34,6 +36,62 @@ AgentCourt provides **recourse** as a programmable, transparent primitive:
 | Caller can submit a favorable verdict | **Caller input ≠ final verdict** — `finalize_verdict(dispute_id)` takes no verdict |
 | Uncertain cases auto-settle unsafely | Fail-closed states: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` freeze settlement |
 | Escrow can't consume AI opinions | Machine-readable verdict: `{verdict, confidence, resolution, reviewRequired}` |
+
+## Screenshots
+
+All shots are from the live deployment on GenLayer Studionet (chain 61999), walking one dispute from creation to a fail-closed `UNVERIFIABLE` verdict.
+
+### Dashboard
+
+Registry of on-chain disputes with totals, search/filter, and per-dispute lifecycle badges.
+
+![AgentCourt dashboard: dispute registry with totals and status badges](docs/images/dashboard.png)
+
+### Dispute detail
+
+Workflow actions gated by lifecycle state, claim metadata, the verdict derived from evaluation, and the event timeline.
+
+![Dispute detail with workflow actions, claim metadata, derived verdict, and event timeline](docs/images/dispute-detail.png)
+
+### Evidence explorer
+
+Submitted evidence with type, source, and verification status, plus provenance stats.
+
+![Evidence explorer showing verified evidence rows and source statistics](docs/images/evidence-explorer.png)
+
+### Evaluator results
+
+Four independent evaluator roles, each with its verdict, confidence, and reasoning hash.
+
+![Evaluator results with four independent role cards and a majority REVIEW verdict](docs/images/evaluator-results.png)
+
+### Adversarial review
+
+The reviewer challenges the emerging majority and itemizes the disputed assumptions.
+
+![Adversarial review challenging consensus with three finding cards](docs/images/adversarial-review.png)
+
+### Consensus
+
+Vote breakdown, agreement ratio, and material-disagreement detection with the consensus reasoning.
+
+![Consensus breakdown with disagreement detected](docs/images/consensus.png)
+
+### Verdict explorer
+
+The machine-readable verdict that escrow and settlement contracts consume.
+
+![Verdict explorer showing an UNVERIFIABLE verdict with freeze resolution](docs/images/verdict-explorer.png)
+
+## Deployed app
+
+| | |
+|---|---|
+| **Live frontend** | https://agent-court-genlayer.vercel.app/ |
+| **Network** | GenLayer Studionet — Chain ID `61999` |
+| **Explorer** | https://explorer-studio.genlayer.com |
+
+The live frontend is bound to the two contracts below via `VITE_AGENTCOURT_CORE` / `VITE_RESOLUTION_MANAGER` (see `.env.example`).
 
 ## Deployed contracts (GenLayer Studionet, Chain ID 61999)
 
