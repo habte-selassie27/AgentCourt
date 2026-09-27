@@ -12,6 +12,7 @@ import {
   ConsensusFailedError,
   detectConsensusFailure,
   isTransientRpcWaitError,
+  leaderReceiptFailure,
   TransactionPendingError,
 } from '../frontend/src/sdk/genlayer';
 
@@ -185,6 +186,67 @@ describe('detectConsensusFailure', () => {
   it('returns null when the node omits the result (cannot prove failure)', () => {
     expect(detectConsensusFailure({ statusName: 'ACCEPTED' })).toBeNull();
     expect(detectConsensusFailure(null)).toBeNull();
+  });
+});
+
+describe('leaderReceiptFailure', () => {
+  // Verbatim shape from a Studionet create_dispute that SUCCEEDED
+  // (0x9f8dea4b…, result_name MAJORITY_AGREE) yet reported an idle validator.
+  const succeededWithIdleValidator = {
+    resultName: 'MAJORITY_AGREE',
+    consensus_data: {
+      leader_receipt: [
+        {
+          mode: 'leader',
+          vote: null,
+          execution_result: 'SUCCESS',
+          result: { status: 'return', payload: '0x19' },
+        },
+        {
+          mode: 'validator',
+          vote: 'idle',
+          execution_result: 'ERROR',
+          result: { status: 'contract_error', payload: 'idle' },
+          genvm_result: { error_code: 'CONSENSUS_VALIDATOR_QUORUM_REACHED' },
+        },
+      ],
+    },
+  };
+
+  it('ignores the idle validator row on a successful write', () => {
+    expect(leaderReceiptFailure(succeededWithIdleValidator)).toBeNull();
+  });
+
+  it('still reports a real leader contract error', () => {
+    const receipt = {
+      consensus_data: {
+        leader_receipt: [
+          {
+            mode: 'leader',
+            execution_result: 'FINISHED_WITH_ERROR',
+            result: { status: 'contract_error', payload: 'exit_code 1' },
+          },
+        ],
+      },
+    };
+    expect(leaderReceiptFailure(receipt)).toBe('exit_code 1');
+  });
+
+  it('falls back to filtering idle rows when the node omits mode', () => {
+    const receipt = {
+      consensus_data: {
+        leader_receipt: [
+          { execution_result: 'SUCCESS', result: { status: 'return', payload: '0x19' } },
+          { vote: 'idle', execution_result: 'ERROR', result: { status: 'contract_error', payload: 'idle' } },
+        ],
+      },
+    };
+    expect(leaderReceiptFailure(receipt)).toBeNull();
+  });
+
+  it('returns null when the receipt has no leader_receipt', () => {
+    expect(leaderReceiptFailure(null)).toBeNull();
+    expect(leaderReceiptFailure({ consensus_data: {} })).toBeNull();
   });
 });
 

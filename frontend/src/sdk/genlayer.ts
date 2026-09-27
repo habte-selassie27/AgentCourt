@@ -146,6 +146,61 @@ export function detectConsensusFailure(receipt: unknown): ConsensusFailure | nul
   };
 }
 
+/**
+ * Detail string when the *leader's* receipt proves the call failed, else null.
+ *
+ * Studionet returns several receipts under `consensus_data.leader_receipt` —
+ * the leader's own plus entries for other validators. A validator that stops
+ * early (`vote: 'idle'`, `execution_result: 'ERROR'`, `genvm_result.error_code:
+ * CONSENSUS_VALIDATOR_QUORUM_REACHED`) reports a decoded result of
+ * `{status: 'contract_error', payload: 'idle'}` even though the leader
+ * committed the write. Only the leader's row describes this transaction, so
+ * non-leader rows are ignored.
+ */
+export function leaderReceiptFailure(receipt: unknown): string | null {
+  const leaders = (receipt as any)?.consensus_data?.leader_receipt;
+  if (!Array.isArray(leaders)) return null;
+
+  const rows = leaders.filter(
+    (leader): leader is Record<string, any> => !!leader && typeof leader === 'object',
+  );
+  const leaderRows = rows.filter((row) => String(row.mode ?? '') === 'leader');
+  // Fallback for nodes that omit `mode`: an abandoned row is tagged
+  // `vote: 'idle'`, or genvm_result.error_code CONSENSUS_VALIDATOR_QUORUM_REACHED.
+  const candidates =
+    leaderRows.length > 0
+      ? leaderRows
+      : rows.filter(
+          (row) =>
+            String(row.vote ?? '') !== 'idle' &&
+            String(row?.genvm_result?.error_code ?? '') !== 'CONSENSUS_VALIDATOR_QUORUM_REACHED',
+        );
+
+  for (const leader of candidates) {
+    const result = leader.result;
+    if (result && typeof result === 'object') {
+      const status = String((result as any).status ?? '');
+      const payload = String((result as any).payload ?? '');
+      if (
+        status === 'contract_error' ||
+        status === 'rollback' ||
+        status === 'error' ||
+        /exit_code\s+\d+/i.test(payload) ||
+        /rollback|contract_error/i.test(status)
+      ) {
+        return payload || status;
+      }
+    }
+
+    // Some nodes expose only a textual execution_result.
+    const exec = String((leader as any)?.execution_result ?? '');
+    if (exec && exec !== 'FINISHED_WITH_RETURN' && /error|exit_code|rollback/i.test(exec)) {
+      return exec;
+    }
+  }
+  return null;
+}
+
 export interface GenCallResult<T = unknown> {
   ok: boolean;
   data?: T;
@@ -288,31 +343,9 @@ export class GenLayerClient {
 
   /** Raise if the finalized leader receipt reports a contract error / rollback. */
   private assertLeaderReceiptOk(receipt: unknown, method: string): void {
-    const leaders = (receipt as any)?.consensus_data?.leader_receipt;
-    if (!Array.isArray(leaders)) return;
-
-    for (const leader of leaders) {
-      if (!leader || typeof leader !== 'object') continue;
-      const result = leader.result;
-      if (result && typeof result === 'object') {
-        const status = String((result as any).status ?? '');
-        const payload = String((result as any).payload ?? '');
-        if (
-          status === 'contract_error' ||
-          status === 'rollback' ||
-          status === 'error' ||
-          /exit_code\s+\d+/i.test(payload) ||
-          /rollback|contract_error/i.test(status)
-        ) {
-          throw new ContractExecutionError(method, payload || status);
-        }
-      }
-
-      // Some nodes expose only a textual execution_result.
-      const exec = String((leader as any)?.execution_result ?? '');
-      if (exec && exec !== 'FINISHED_WITH_RETURN' && /error|exit_code|rollback/i.test(exec)) {
-        throw new ContractExecutionError(method, exec);
-      }
+    const detail = leaderReceiptFailure(receipt);
+    if (detail !== null) {
+      throw new ContractExecutionError(method, detail);
     }
   }
 

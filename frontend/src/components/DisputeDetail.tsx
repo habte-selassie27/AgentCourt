@@ -105,6 +105,10 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
         if (friendly.detail && err instanceof Error && err.message !== friendly.detail) {
           setActionError((prev) => `${prev} (${friendly.detail})`);
         }
+        // The write may still have landed (receipt decoding can report a
+        // failure for a finalized tx). Re-read so the badge/buttons reflect
+        // on-chain truth rather than the pre-click snapshot.
+        await loadData();
       }
     } finally {
       setActionBusy(null);
