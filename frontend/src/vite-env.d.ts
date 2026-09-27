@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_ADVERSARIAL_REVIEWER?: string;
   readonly VITE_CONSENSUS_ENGINE?: string;
   readonly VITE_CHAIN_ID?: string;
+  readonly VITE_EXPLORER_URL?: string;
 }
 
 interface ImportMeta {

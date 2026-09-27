@@ -29,6 +29,7 @@ import { getCourt } from './sdk';
 //   VITE_AGENTCOURT_CORE      AgentCourtCore address
 //   VITE_RESOLUTION_MANAGER   ResolutionManager address
 //   VITE_CHAIN_ID             (default: 61999)
+//   VITE_EXPLORER_URL         (default: https://explorer-studio.genlayer.com)
 const court = getCourt();
 
 // Or construct explicitly:

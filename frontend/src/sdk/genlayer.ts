@@ -8,9 +8,12 @@ import { createClient } from 'genlayer-js';
 import { studionet } from 'genlayer-js/chains';
 import { ExecutionResult, TransactionStatus } from 'genlayer-js/types';
 
-export const GENLAYER_EXPLORER_URL = 'https://explorer-studio.genlayer.com';
+/** Overridable via VITE_EXPLORER_URL; trailing slashes are stripped. */
+const CONFIGURED_EXPLORER = (import.meta.env.VITE_EXPLORER_URL || 'https://explorer-studio.genlayer.com').replace(/\/+$/, '');
 
-/** Canonical tx link — AgentCourt surfaces explorer-studio links and nothing else. */
+export const GENLAYER_EXPLORER_URL = CONFIGURED_EXPLORER;
+
+/** Canonical tx link — always built from GENLAYER_EXPLORER_URL, never the stale SDK explorer. */
 export const explorerTxUrl = (hash: string): string => `${GENLAYER_EXPLORER_URL}/tx/${hash}`;
 
 const createStudionetChain = (rpcUrl: string) => ({

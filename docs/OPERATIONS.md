@@ -96,6 +96,7 @@ vercel --prod
 - `VITE_RESOLUTION_MANAGER`
 - `VITE_RPC_URL`
 - `VITE_CHAIN_ID`
+- `VITE_EXPLORER_URL` — block explorer base URL used for all tx links (default: `https://explorer-studio.genlayer.com`)
 
 ---
 
