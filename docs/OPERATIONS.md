@@ -193,6 +193,7 @@ Test scenarios to maintain:
 - Fake evidence submissions
 - Caller-supplied verdict rejection (finalize takes no verdict argument)
 - Unauthorized settlement / appeal attempts
+- Appeal flow: `request_evaluation` from `APPEALED` writes a superseding verdict; `resolve_appeal` rejects non-owner callers; a second appeal is rejected while one is unresolved; `execute_settlement` refuses while any appeal is unresolved
 - Evaluator disagreement paths (DISPUTED, INCONCLUSIVE)
 
 ## CI/CD
@@ -517,7 +518,7 @@ def _require_not_paused(self):
         raise gl.vm.UserError("Contract is paused")
 ```
 
-ResolutionManager additionally refuses settlement/appeals until `set_core` wiring is done.
+ResolutionManager additionally refuses settlement/appeals until `set_core` wiring is done, and `resolve_appeal` is owner-only.
 
 ### Emergency Settlement
 For critical incidents:

@@ -1,5 +1,39 @@
 # AgentCourt Audit — GenLayer Portal Rejection Remediation
 
+## Rejection #2 — Appeal Flow (resolved)
+
+### Rejection (verbatim)
+
+> "Please make the advertised appeal flow executable and consistent: after an appeal opens, allow and test re-evaluation through a superseding verdict before resolution, enforce the intended authorization for resolving an appeal, and update the UI and documentation to match the implemented state transitions."
+
+### Defects and fixes
+
+| Defect | Fix |
+|---|---|
+| `open_appeal` sets status `APPEALED`, but `request_evaluation` only allowed `VERDICT` (+ open appeal) — the advertised "re-run evaluation to supersede" path was unreachable | `request_evaluation` now allows `STATUS_APPEALED`; a superseding verdict is finalized from there |
+| `open_appeal` could stack unlimited concurrent appeals | Core now rejects `open_appeal` while an unresolved appeal exists (`_has_open_appeal`) |
+| `ResolutionManager.resolve_appeal` was callable by anyone, contradicting the documented "owner only" intent | `resolve_appeal` now calls `_require_owner()` before comparing verdict versions |
+| UI advertised an appeal but never showed appeal state or the resolution action | `DisputeDetail` reads ResolutionManager appeals + owner, shows appeal status, and gates an owner-only **Resolve Appeal** action; SDK gains `resolveAppeal` + appeal reads |
+| Docs described `openAppeal` as "triggers re-evaluation" and omitted the source of resolution authority | DEVELOPER_GUIDE / ARCHITECTURE / README / PROTOCOL now document `openAppeal → requestEvaluation → finalizeVerdict (superseding) → resolveAppeal (owner) → executeSettlement` |
+| After a superseding verdict the status returns to `VERDICT` while the appeal was still open, so `execute_settlement` could move funds before `resolve_appeal` | `execute_settlement` now refuses while any appeal is unresolved; UI disables **Execute Settlement** until the appeal is resolved |
+
+### Appeal flow (implemented)
+
+```
+finalize_verdict (v1, status VERDICT)
+  → open_appeal        (party/owner; status APPEALED; one open appeal at a time)
+  → request_evaluation (allowed from APPEALED)
+  → finalize_verdict   (v2 supersedes v1; prior stored as "<dispute>:v1", superseded=true)
+  → resolve_appeal     (ResolutionManager owner only; accepted = v2 > v1)
+  → execute_settlement (blocked while APPEALED or while the appeal is unresolved;
+                        settles the superseding verdict once resolved)
+```
+
+Tests: `TestAppealFlow` (re-evaluation from `APPEALED`, superseding version + prior
+marked superseded, duplicate appeal rejected, settlement blocked until the appeal is
+resolved) and `TestResolveAppealAuthorization` (owner-only resolve, accepted on version
+bump, not accepted otherwise, no double resolve).
+
 ## Root Cause
 
 The previous submission mixed a Solidity `AgentCourtCore` (EVM, not GenLayer IC) with Python Intelligent Contracts that either:
@@ -121,9 +155,9 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 |---|---|
 | `genvm-lint lint` (both ICs) | ✓ 3 checks each |
 | `genvm-lint check` (both ICs) | ✓ lint + validation (with `GENVM_VERSION=v0.3.0-rc7`) |
-| `pytest tests/unit/ -q` | ✓ 39 passed |
+| `pytest tests/unit/ -q` | ✓ 55 passed (incl. `TestAppealFlow`, `TestResolveAppealAuthorization`) |
 | `npm run typecheck` | ✓ |
-| `npm test` | ✓ 5 vitest tests |
+| `npm test` | ✓ 28 vitest tests |
 | `npm run build` | ✓ vite build |
 | Studionet `get_dispute_count` / `get_core` | ✓ live, `set_core` wired |
 
@@ -131,6 +165,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 
 ## Remaining Issues
 
+0. **Redeploy required after the appeal-flow fix.** Both IC sources changed (`request_evaluation` now allows `APPEALED`; `open_appeal` rejects duplicate open appeals; `resolve_appeal` is owner-only), so the currently linked Studionet pair below is **stale**. Re-run `scripts/deploy/deploy.sh`, re-wire `set_core`, and update the portal contract links before resubmitting.
 1. **Studionet current pair (deploy.sh, post-`run_nondet` and calldata-safe serialization fixes)** — `ResolutionManager` `0x4c63c9C105AD80A905456c986A027BDA46F9687a`, `AgentCourtCore` `0xeFc4318024F63ca06CC138B354D6539c9841A3B4`. Owner `0x5B36…4c89` (= active CLI account `rabby`). **`set_core` wired** (ACCEPTED). Superseded pairs include Core `0xC84a76b2…B4cbD` / Manager `0x6E2aabaf…e72a` (serialization fix, adversarial parser fallback), Core `0x9aBcF35B…aCbF6` / Manager `0x2e9f5e39…D29BF`, and the manual Studio pair Core `0xEC3d5e53…2578` / Manager `0xb3f14B55…E530`.
 2. **No private keys in git history** — `.env` is gitignored and has never been committed (`git log --all -- .env` is empty). The local `.env` private key was redacted to a placeholder; rotate it anyway before any production use.
 3. **Stake/bond economic enforcement** is metadata-level (recorded amounts); real fund custody needs a GenLayer value-transfer / escrow design beyond this remediation.

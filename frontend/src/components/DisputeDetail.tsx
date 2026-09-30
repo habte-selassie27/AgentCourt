@@ -138,7 +138,7 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     );
   }
 
-  const { dispute, evidence, verdict, consensus, evaluation } = data;
+  const { dispute, evidence, verdict, consensus, evaluation, appeals, managerOwner } = data;
   const status = dispute.status;
 
   const timeline = buildTimeline({
@@ -189,10 +189,20 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     signerLc !== null &&
     (dispute.claimant.toLowerCase() === signerLc || dispute.respondent.toLowerCase() === signerLc);
 
+  // Resolving closes the appeal record by comparing core verdict versions and
+  // is ResolutionManager-owner-only. While an appeal is open the dispute sits in
+  // APPEALED: re-evaluate, finalize a superseding verdict, then resolve.
+  const openAppeal = appeals.find((a) => !a.resolved) ?? null;
+  const signerIsManagerOwner =
+    signerLc !== null && managerOwner !== null && signerLc === managerOwner.toLowerCase();
+  const canResolveAppeal = openAppeal !== null && signerIsManagerOwner;
+
   const canInvestigate =
     (status === 'EVIDENCE_COLLECTION' || status === 'OPEN') && isDisputeParty;
+  // On-chain: allowed from the evaluation states, from APPEALED, and from a
+  // VERDICT that still carries an unresolved appeal (re-run to supersede).
   const canEvaluate =
-    [
+    ([
       'INVESTIGATION',
       'DELIBERATION',
       'ADVERSARIAL_REVIEW',
@@ -201,14 +211,22 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
       'INCONCLUSIVE',
       'DISPUTED',
       'APPEALED',
-    ].includes(status) && isDisputeParty;
+    ].includes(status) ||
+      (status === 'VERDICT' && openAppeal !== null)) &&
+    isDisputeParty;
   // finalize_verdict / execute_settlement have no party check on-chain.
   const canFinalize =
     ['CONSENSUS', 'INCONCLUSIVE', 'DISPUTED'].includes(status) && Boolean(signer);
+  // Settlement is refused on-chain while any appeal is unresolved.
   const canSettle =
-    status === 'VERDICT' && verdict !== null && !verdict.reviewRequired && Boolean(signer);
+    status === 'VERDICT' &&
+    verdict !== null &&
+    !verdict.reviewRequired &&
+    openAppeal === null &&
+    Boolean(signer);
+  // Only one open appeal at a time; core rejects a second one.
   const canAppeal =
-    (status === 'VERDICT' || status === 'CLOSED') && isDisputeParty;
+    (status === 'VERDICT' || status === 'CLOSED') && isDisputeParty && openAppeal === null;
 
   const tabs: { key: DetailTab; label: string; visible: boolean }[] = [
     { key: 'timeline', label: 'Timeline', visible: true },
@@ -290,6 +308,11 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           <button
             className="btn btn-primary"
             disabled={!canSettle || actionBusy !== null}
+            title={
+              openAppeal
+                ? 'Blocked on-chain while an appeal is unresolved — resolve the appeal first'
+                : 'Runs only for a non-reviewRequired verdict with no open appeal'
+            }
             onClick={() =>
               void runAction('settle', () => getCourt().executeSettlement(disputeId), 'Settlement executed.')
             }
@@ -308,6 +331,21 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
             }
           >
             {actionBusy === 'appeal' ? 'Opening…' : 'Open Appeal'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={!canResolveAppeal || actionBusy !== null}
+            title="ResolutionManager owner only: derives the outcome by comparing core verdict versions"
+            onClick={() =>
+              openAppeal &&
+              void runAction(
+                'resolveAppeal',
+                () => getCourt().resolveAppeal(openAppeal.id, disputeId),
+                'Appeal resolved from core verdict versions.',
+              )
+            }
+          >
+            {actionBusy === 'resolveAppeal' ? 'Resolving…' : 'Resolve Appeal'}
           </button>
         </div>
         {signer && !isDisputeParty && (
@@ -363,6 +401,35 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           </div>
         )}
       </div>
+
+      {appeals.length > 0 && (
+        <div className="stat-card" style={{ marginBottom: '1.5rem' }}>
+          <h3>Appeals ({appeals.length})</h3>
+          <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+            {appeals.map((a) => (
+              <div key={a.id.toString()} style={{ fontSize: '0.9rem' }}>
+                <strong>Appeal #{a.id.toString()}</strong> · by {shortAddress(a.appellant)} ·{' '}
+                {a.resolved ? (
+                  <span style={{ color: a.accepted ? 'var(--success)' : 'var(--text-secondary)' }}>
+                    resolved — {a.accepted ? `superseded by ${a.supersedingVerdict}` : 'no superseding verdict'}
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--warning)' }}>
+                    open at verdict v{a.verdictVersionAtOpen.toString()} — re-evaluate and finalize, then resolve
+                  </span>
+                )}
+                <div style={{ color: 'var(--text-secondary)' }}>{a.reason}</div>
+              </div>
+            ))}
+          </div>
+          {openAppeal && !signerIsManagerOwner && (
+            <div style={{ marginTop: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+              Resolving the appeal is restricted to the ResolutionManager owner
+              {managerOwner ? ` (${shortAddress(managerOwner)})` : ''}.
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
         <div className="stat-card"><h3>Claim Type</h3><div style={{ fontSize: '1.1rem', marginTop: '0.5rem' }}>{dispute.claimType.replace(/_/g, ' ')}</div></div>

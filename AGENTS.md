@@ -1624,6 +1624,19 @@ material contradiction
 
 rather than simply allowing unlimited retries.
 
+Implemented state transitions:
+
+```text
+VERDICT → open_appeal → APPEALED
+APPEALED → request_evaluation → CONSENSUS | INCONCLUSIVE | DISPUTED | EVALUATION_FAILED
+CONSENSUS | INCONCLUSIVE | DISPUTED → finalize_verdict → VERDICT (superseding version)
+VERDICT → resolve_appeal (ResolutionManager owner only) → appeal accepted iff version increased
+VERDICT → execute_settlement → SETTLEMENT → CLOSED (blocked while APPEALED or while any appeal is unresolved)
+```
+
+Opening an appeal does not run evaluation by itself; re-evaluation is a separate
+`request_evaluation` write, and only one appeal may be open at a time.
+
 ---
 
 # Appeal Security
@@ -1841,7 +1854,7 @@ Settlement and appeal authority. Callers never supply verdicts:
 set_core (one-time owner wiring)
 execute_settlement(dispute_id)   → core.view().get_verdict() only
 open_appeal (core-only)          → captures verdict version
-resolve_appeal(appeal_id)        → compares core verdict versions
+resolve_appeal(appeal_id)        → owner-only; compares core verdict versions
 is_settled / get_settlement views
 ```
 

@@ -19,6 +19,7 @@ export { describeError } from './errors';
 export { ConsensusFailedError, GENLAYER_EXPLORER_URL, TransactionPendingError, explorerTxUrl } from './genlayer';
 export type { FriendlyError } from './errors';
 export type {
+  AppealRecord,
   ConsensusRecord,
   DisputeDetailData,
   DisputeEvidence,

@@ -57,9 +57,13 @@ const address = await court.connectWallet((window as any).ethereum);
 | `getEvaluation(disputeId: bigint)` | `EvaluationRecord \| null` |
 | `getConsensusRecords(disputeId: bigint)` | `ConsensusRecord[]` |
 | `getConsensusCount(disputeId: bigint)` | `bigint` |
-| `loadDisputeDetail(disputeId: bigint)` | `DisputeDetailData` (dispute + evidence + verdict + consensus + evaluation) |
+| `loadDisputeDetail(disputeId: bigint)` | `DisputeDetailData` (dispute + evidence + verdict + consensus + evaluation + appeals + manager owner) |
 | `getDisputeCount()` | `bigint` |
 | `listDisputes()` | `DisputeRecord[]` |
+| `getDisputeAppeals(disputeId: bigint)` | `AppealRecord[]` — read from ResolutionManager |
+| `getAppeal(appealId: bigint)` | `AppealRecord \| null` |
+| `getAppealCount(disputeId: bigint)` | `bigint` |
+| `getManagerOwner()` | `string \| null` — ResolutionManager owner (gates the resolve action) |
 
 ## Write Methods (wallet required)
 
@@ -71,7 +75,8 @@ const address = await court.connectWallet((window as any).ethereum);
 | `startInvestigation(disputeId: bigint)` | `void` |
 | `requestEvaluation(disputeId: bigint)` | `void` — runs the evaluation pipeline (may take minutes) |
 | `finalizeVerdict(disputeId: bigint)` | `void` — derives the verdict from the stored evaluation |
-| `openAppeal(disputeId: bigint, reason: string)` | `void` |
+| `openAppeal(disputeId: bigint, reason: string)` | `void` — requires a finalized verdict; moves the dispute to `APPEALED` |
+| `resolveAppeal(appealId: bigint, disputeId?: bigint)` | `void` — ResolutionManager **owner only**; `disputeId` is only used for the session tx log |
 | `executeSettlement(disputeId: bigint)` | `void` |
 
 ## Polling
@@ -130,6 +135,21 @@ interface DisputeDetailData {
   verdict: VerdictRecord | null;
   consensus: ConsensusRecord[];
   evaluation: EvaluationRecord | null;
+  appeals: AppealRecord[];      // from ResolutionManager
+  managerOwner: string | null;  // ResolutionManager owner
+}
+
+interface AppealRecord {
+  id: bigint;
+  disputeId: bigint;
+  appellant: string;
+  reason: string;
+  bond: bigint;
+  createdAt: bigint;
+  resolved: boolean;             // set once ResolutionManager compares versions
+  accepted: boolean;             // true when a superseding verdict was finalized
+  verdictVersionAtOpen: bigint;  // core verdict version captured at open
+  supersedingVerdict: string;    // NONE while unresolved
 }
 ```
 
@@ -153,8 +173,23 @@ Unknown string values map to `0` on write (`DELIVERY_FAILURE` / `ONCHAIN_TRANSAC
 ```text
 createDispute → submitEvidence → startInvestigation → requestEvaluation
       → finalizeVerdict → executeSettlement
-                                  ↘ openAppeal (after verdict; triggers re-evaluation)
+
+Appeal path (re-evaluation is explicit, not automatic):
+openAppeal (finalized verdict → status APPEALED)
+      → requestEvaluation (allowed while the appeal is open)
+            → finalizeVerdict (writes a superseding, higher-version verdict)
+                  → resolveAppeal (owner only; compares core verdict versions)
+                        → executeSettlement (blocked until resolveAppeal; then settles the superseding verdict)
 ```
+
+`openAppeal` records the appeal and moves the dispute to `APPEALED`; it does **not**
+start re-evaluation by itself. The party then calls `requestEvaluation` from the
+`APPEALED` state, `finalizeVerdict` commits a superseding verdict (version +1, prior
+verdict marked `superseded`), and only then does the owner call `resolveAppeal`.
+Resolution sets `accepted = true` when core's verdict version is higher than the
+version captured at open, and does nothing else. Settlement is refused while the
+dispute is `APPEALED` **and** while the appeal record is still unresolved — so it
+only runs after `resolveAppeal`, from the superseding verdict.
 
 ---
 
@@ -170,7 +205,7 @@ submit_evidence(dispute_id, evidence_type, source, ref_uri, content_hash, descri
 start_investigation(dispute_id)
 request_evaluation(dispute_id) -> str        # consensus state; no verdict arguments accepted
 finalize_verdict(dispute_id) -> uint256      # verdict derived on-chain from the stored evaluation
-execute_settlement(dispute_id)               # requires finalized, non-frozen verdict
+execute_settlement(dispute_id)               # requires finalized, non-frozen verdict, no open appeal
 open_appeal(dispute_id, reason)              # requires a finalized verdict
 pause() / unpause()                          # owner only
 ```
@@ -208,7 +243,7 @@ pause() / unpause()
 
 ```python
 open_appeal(dispute_id, appellant, reason)   # called by AgentCourtCore
-resolve_appeal(appeal_id)                    # owner only
+resolve_appeal(appeal_id)                    # ResolutionManager owner only
 execute_settlement(dispute_id)               # AgentCourtCore only; idempotent
 ```
 

@@ -601,7 +601,7 @@ Verdict Finalized (AgentCourtCore)
       ↓
 execute_settlement (AgentCourtCore)
       ↓   requires status VERDICT, verdict not superseded,
-      ↓   and reviewRequired == false
+      ↓   reviewRequired == false, and no unresolved appeal
 ResolutionManager.execute_settlement  (core-only)
       ↓
 Settlement recorded (nonce + resolution + verdict snapshot)
@@ -720,7 +720,7 @@ Settlement operations are idempotent:
 
 **CLOSED**: Dispute fully resolved.
 
-**APPEALED**: An appeal was opened against a finalized verdict.
+**APPEALED**: An appeal was opened against a finalized verdict. Re-evaluation is allowed from this state: `request_evaluation` re-runs the pipeline and `finalize_verdict` writes a superseding (higher-version) verdict, after which the ResolutionManager owner calls `resolve_appeal` to compare verdict versions and close the appeal. Settlement stays blocked while the dispute is `APPEALED` and while any appeal record is unresolved, so it can only run after `resolve_appeal` closes the appeal.
 
 ## Evaluation Terms
 

@@ -125,12 +125,13 @@ Connect a wallet on chain **61999** (the UI offers to switch/add the network), t
 2. **Start investigation**
 3. **Request evaluation** — live web fetch of evidence URLs + 4 LLM evaluators + adversarial review under validator consensus (takes minutes)
 4. **Finalize verdict** — no inputs; derived from the stored evaluation
-5. **Execute settlement** — only when `reviewRequired` is false; optionally **Open appeal**
+5. **Execute settlement** — only when `reviewRequired` is false and no appeal is open
+6. **Appeal** (optional) — **Open appeal** moves the dispute to `APPEALED`; re-run **Request evaluation** (allowed while the appeal is open), **Finalize verdict** to write a superseding, higher-version verdict, then the ResolutionManager owner calls **Resolve appeal** (compares core verdict versions); settlement is refused until that call closes the appeal
 
 ### 3. Run the checks
 
 ```bash
-pytest tests/unit/ -v                 # 39 Python acceptance tests (IC workflow + caller isolation)
+pytest tests/unit/ -v                 # 57 Python acceptance tests (IC workflow, caller isolation, appeal flow)
 npm test                              # vitest domain tests
 npm run typecheck && npm run build    # TypeScript + Vite build
 GENVM_VERSION=v0.3.0-rc7 genvm-lint check intelligent-contracts/core/agentcourt_core.py
@@ -170,13 +171,15 @@ AgentCourtCore (Python IC)
 
 ResolutionManager (Python IC)
   ├── set_core (one-time wiring)
-  ├── open_appeal / resolve_appeal (compares core verdict versions)
+  ├── open_appeal (core only) / resolve_appeal (owner only — compares core verdict versions)
   └── execute_settlement(dispute_id)   # reads core.get_verdict() via view()
 ```
 
-**Caller isolation invariant:** `CALLER INPUT ≠ FINAL VERDICT` — `finalize_verdict`, `execute_settlement`, and `resolve_appeal` accept only an ID; verdict, confidence, resolution, and appeal outcomes are all derived from stored protocol state.
+**Appeal path:** `openAppeal` → `requestEvaluation` (re-run while `APPEALED`) → `finalizeVerdict` (superseding version) → `resolveAppeal` (owner-only) → `executeSettlement`.
 
-**Fail-closed:** `reviewRequired` verdicts and the `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` states refuse settlement (freeze), never auto-release.
+**Caller isolation invariant:** `CALLER INPUT ≠ FINAL VERDICT` — `finalize_verdict`, `execute_settlement`, and `resolve_appeal` accept only an ID; verdict, confidence, resolution, and appeal outcomes are all derived from stored protocol state. Resolving an appeal is additionally restricted to the ResolutionManager owner.
+
+**Fail-closed:** `reviewRequired` verdicts, the `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` states, and any unresolved appeal refuse settlement (freeze), never auto-release.
 
 Details: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 
@@ -192,7 +195,7 @@ agentcourt/
 │   ├── components/                    # dashboard, detail, forms, explorers
 │   └── dispute|evidence|verdict|settlement/
 ├── tests/
-│   ├── unit/test_genlayer_workflow.py # 39 acceptance tests
+│   ├── unit/test_genlayer_workflow.py # 57 acceptance tests
 │   ├── genlayer_stub.py               # CPython stub of the genlayer module
 │   └── sdk.agentcourt.test.ts         # vitest domain tests
 ├── docs/                              # PROTOCOL, DEVELOPER_GUIDE, OPERATIONS, …
@@ -221,7 +224,7 @@ agentcourt/
 ## Quality & verification
 
 - **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.get`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
-- **Tests:** 39 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, timestamps, Keccak commitments) + 5 vitest tests.
+- **Tests:** 57 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
 - **CI:** `genvm-lint check` on both ICs, `pytest`, frontend build (`.github/workflows/ci.yml`).
 - **Audit trail:** [`AUDIT.md`](AUDIT.md) documents the verbatim GenLayer Portal rejection, every defect, and the remediation.
 

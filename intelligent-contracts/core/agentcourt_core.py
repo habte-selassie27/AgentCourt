@@ -782,6 +782,9 @@ class AgentCourtCore(gl.Contract):
         if not self._is_party_or_owner(dispute):
             raise gl.vm.UserError("Not a dispute party")
 
+        # An open appeal re-runs the pipeline: the dispute sits in APPEALED until
+        # a superseding verdict is finalized, so re-evaluation stays allowed from
+        # there (as well as from a verdict that still has an unresolved appeal).
         allowed = (
             dispute["status"]
             in (
@@ -792,6 +795,7 @@ class AgentCourtCore(gl.Contract):
                 STATUS_EVALUATION_FAILED,
                 STATUS_INCONCLUSIVE,
                 STATUS_DISPUTED,
+                STATUS_APPEALED,
             )
             or (
                 dispute["status"] == STATUS_VERDICT
@@ -1044,6 +1048,11 @@ class AgentCourtCore(gl.Contract):
             raise gl.vm.UserError("Verdict superseded")
         if verdict.get("reviewRequired"):
             raise gl.vm.UserError("Review required; settlement frozen")
+        # An appeal must be resolved before funds move: after a superseding
+        # verdict is finalized the status returns to VERDICT while the appeal is
+        # still open, so settlement has to check the appeal record explicitly.
+        if self._has_open_appeal(int(dispute_id)):
+            raise gl.vm.UserError("Appeal open; resolve it before settlement")
 
         dispute["status"] = STATUS_SETTLEMENT
         self._save_dispute(dispute)
@@ -1067,6 +1076,10 @@ class AgentCourtCore(gl.Contract):
             raise gl.vm.UserError("Appeal requires a finalized verdict")
         if not self._is_party_or_owner(dispute):
             raise gl.vm.UserError("Not a dispute party")
+        # One open appeal at a time; resolve it (via ResolutionManager) before a
+        # further appeal round can be opened.
+        if self._has_open_appeal(int(dispute_id)):
+            raise gl.vm.UserError("An appeal is already open for this dispute")
 
         manager = gl.get_contract_at(self.resolution_manager)
         manager.emit(on="finalized").open_appeal(

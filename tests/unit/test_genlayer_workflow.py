@@ -720,3 +720,150 @@ class TestAddressCoercion:
     def test_address_int_out_of_range_rejected(self):
         with pytest.raises(_UserError):
             core_mod._to_address((1 << 160))
+
+
+# ---------------------------------------------------------------------------
+# 11. Appeal flow — re-evaluation supersedes, then resolution compares versions
+# ---------------------------------------------------------------------------
+
+
+class TestAppealFlow:
+    """Advertised flow: verdict → appeal → re-evaluate → superseding verdict →
+    resolve appeal. Re-evaluation must be executable while the appeal is open."""
+
+    MANAGER = "0x00000000000000000000000000000000000000m5"
+
+    def _open_appealed_dispute(self, monkeypatch):
+        core = make_core(self.MANAGER)
+        did = open_dispute(core)
+        _Message.sender_address = PARTY_A
+        core.submit_evidence(did, 1, "web", "https://x.test", "0x" + "44" * 32, "page")
+        core.start_investigation(did)
+        stub_nondet(monkeypatch, [SUPPORTED, SUPPORTED, SUPPORTED, SUPPORTED])
+        core.request_evaluation(did)
+        core.finalize_verdict(did)
+        assert core.get_verdict(did)["version"] == 1
+
+        # Core asks the manager whether an appeal is already open.
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [])
+        core.open_appeal(did, "material contradiction")
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_APPEALED
+        return core, did
+
+    def test_re_evaluation_allowed_while_appeal_open(self, monkeypatch):
+        core, did = self._open_appealed_dispute(monkeypatch)
+        stub_nondet(monkeypatch, [REFUTED, REFUTED, REFUTED, REFUTED])
+        state = core.request_evaluation(did)
+        assert state == STATE_CONSENSUS
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_CONSENSUS
+
+    def test_superseding_verdict_bumps_version_and_supersedes_prior(self, monkeypatch):
+        core, did = self._open_appealed_dispute(monkeypatch)
+        stub_nondet(monkeypatch, [REFUTED, REFUTED, REFUTED, REFUTED])
+        core.request_evaluation(did)
+        core.finalize_verdict(did)
+
+        current = core.get_verdict(did)
+        assert current["version"] == 2
+        assert current["verdict"] == VERDICT_FALSE
+        assert current["superseded"] is False
+
+        prior = json.loads(core.verdicts[f"{did}:v1"])
+        assert prior["superseded"] is True
+        assert prior["verdict"] == VERDICT_TRUE
+        # Settlement resumes from the superseding verdict.
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_VERDICT
+
+    def test_second_appeal_rejected_while_one_is_open(self, monkeypatch):
+        core, did = self._open_appealed_dispute(monkeypatch)
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [1])
+        register_contract_view(
+            self.MANAGER, "get_appeal", lambda _aid: {"id": 1, "resolved": False}
+        )
+        with pytest.raises(_UserError):
+            core.open_appeal(did, "another round")
+
+    def test_settlement_blocked_while_appeal_unresolved(self, monkeypatch):
+        core, did = self._open_appealed_dispute(monkeypatch)
+
+        # APPEALED status already refuses settlement.
+        _Message.sender_address = PARTY_A
+        with pytest.raises(_UserError):
+            core.execute_settlement(did)
+
+        # Superseding verdict returns the dispute to VERDICT…
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [1])
+        register_contract_view(
+            self.MANAGER, "get_appeal", lambda _aid: {"id": 1, "resolved": False}
+        )
+        stub_nondet(monkeypatch, [REFUTED, REFUTED, REFUTED, REFUTED])
+        core.request_evaluation(did)
+        core.finalize_verdict(did)
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_VERDICT
+
+        # …but the unresolved appeal still refuses settlement.
+        with pytest.raises(_UserError):
+            core.execute_settlement(did)
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_VERDICT
+
+    def test_settlement_allowed_once_appeal_resolved(self, monkeypatch):
+        core, did = self._open_appealed_dispute(monkeypatch)
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [1])
+        register_contract_view(
+            self.MANAGER, "get_appeal", lambda _aid: {"id": 1, "resolved": True}
+        )
+        stub_nondet(monkeypatch, [REFUTED, REFUTED, REFUTED, REFUTED])
+        core.request_evaluation(did)
+        core.finalize_verdict(did)
+
+        _Message.sender_address = PARTY_A
+        core.execute_settlement(did)
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_CLOSED
+
+
+class TestResolveAppealAuthorization:
+    CORE = "0x00000000000000000000000000000000000000c5"
+
+    def _manager_with_appeal(self, verdict_state):
+        manager = make_resolution_manager()
+        _Message.sender_address = RESET_SENDER
+        manager.set_core(self.CORE)
+        register_contract_view(
+            self.CORE, "get_verdict", lambda did: {"disputeId": did, **verdict_state}
+        )
+        _Message.sender_address = Address(self.CORE)
+        aid = manager.open_appeal(7, PARTY_A, "appeal reason")
+        return manager, aid
+
+    def test_only_owner_may_resolve(self):
+        manager, aid = self._manager_with_appeal({"verdict": VERDICT_TRUE, "version": 1})
+        for who in (PARTY_A, PARTY_B, STRANGER, Address(self.CORE)):
+            _Message.sender_address = who
+            with pytest.raises(_UserError):
+                manager.resolve_appeal(aid)
+        assert manager.get_appeal(aid)["resolved"] is False
+
+    def test_owner_resolves_after_superseding_verdict(self):
+        state = {"verdict": VERDICT_TRUE, "version": 1}
+        manager, aid = self._manager_with_appeal(state)
+        state["verdict"] = VERDICT_FALSE
+        state["version"] = 2
+        _Message.sender_address = RESET_SENDER
+        assert manager.resolve_appeal(aid) is True
+        appeal = manager.get_appeal(aid)
+        assert appeal["resolved"] is True
+        assert appeal["accepted"] is True
+        assert appeal["supersedingVerdict"] == VERDICT_FALSE
+
+    def test_owner_resolution_without_supersede_is_not_accepted(self):
+        manager, aid = self._manager_with_appeal({"verdict": VERDICT_TRUE, "version": 1})
+        _Message.sender_address = RESET_SENDER
+        assert manager.resolve_appeal(aid) is False
+        assert manager.get_appeal(aid)["accepted"] is False
+
+    def test_appeal_cannot_be_resolved_twice(self):
+        manager, aid = self._manager_with_appeal({"verdict": VERDICT_TRUE, "version": 1})
+        _Message.sender_address = RESET_SENDER
+        manager.resolve_appeal(aid)
+        with pytest.raises(_UserError):
+            manager.resolve_appeal(aid)

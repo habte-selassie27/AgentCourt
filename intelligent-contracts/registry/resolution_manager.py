@@ -200,9 +200,15 @@ class ResolutionManager(gl.Contract):
         """
         Resolve an appeal by comparing the current core verdict to the verdict
         captured when the appeal opened. No caller-supplied superseding verdict.
+
+        Owner-only: resolving is an administrative close-out that reads the
+        superseding verdict from core, so no party or caller can influence it.
+        Re-evaluation must already have produced a version bump in core (or the
+        appeal is recorded as not accepted).
         """
         if self.paused:
             raise gl.vm.UserError("Contract is paused")
+        self._require_owner()
         key = str(appeal_id)
         if not self.appeal_exists.get(key, False):
             raise gl.vm.UserError("Appeal not found")

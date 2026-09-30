@@ -19,7 +19,7 @@ AgentCourtCore (Python IC)
 
 ResolutionManager (Python IC)
   ├── set_core (one-time wiring)
-  ├── open_appeal / resolve_appeal (reads core verdict versions)
+  ├── open_appeal (core only) / resolve_appeal (owner only — reads core verdict versions)
   └── execute_settlement(dispute_id)  # reads core.get_verdict() via view()
 ```
 
@@ -31,6 +31,25 @@ Claim → Evidence → Investigation → Nondeterministic Evaluation
   → CONSENSUS | INCONCLUSIVE | DISPUTED | EVALUATION_FAILED
   → Verdict (derived) → Settlement → Closed
 ```
+
+## Appeal Flow (re-evaluation before resolution)
+
+```
+finalize_verdict (v1, status VERDICT)
+  → open_appeal            (party/owner; status APPEALED; one open appeal at a time)
+  → request_evaluation     (allowed from APPEALED — re-runs the nondet pipeline)
+  → finalize_verdict       (v2 supersedes v1; prior stored as "<dispute>:v1", superseded=true)
+  → resolve_appeal         (ResolutionManager owner only)
+        accepted = core verdict version > version recorded at open
+  → execute_settlement     (settles the superseding verdict; blocked until the appeal is resolved)
+```
+
+- `open_appeal` never runs evaluation itself; it records the appeal and flips status.
+- `resolve_appeal` takes no verdict: it only compares core's current verdict version
+  against `verdictVersionAtOpen`, so a caller cannot fabricate the superseding outcome.
+- `execute_settlement` refuses unless status is `VERDICT` **and** no appeal is
+  unresolved, so settlement cannot run during `APPEALED` or in the window between
+  finalizing the superseding verdict and resolving the appeal.
 
 ## Cross-Contract Communication
 
@@ -48,7 +67,7 @@ Claim → Evidence → Investigation → Nondeterministic Evaluation
 | request_evaluation | dispute id | evaluation via nondet + validators |
 | finalize_verdict | dispute id | verdict, confidence, resolution |
 | execute_settlement | dispute id | action from stored verdict |
-| resolve_appeal | appeal id | compares core verdict versions |
+| resolve_appeal | appeal id | compares core verdict versions (owner-only authorization) |
 
 ## Fail-Closed States
 

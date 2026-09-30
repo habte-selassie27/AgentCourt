@@ -87,6 +87,10 @@ export interface DisputeDetailData {
   verdict: VerdictRecord | null;
   consensus: ConsensusRecord[];
   evaluation: EvaluationRecord | null;
+  /** Appeal records held by ResolutionManager (empty when it is not wired). */
+  appeals: AppealRecord[];
+  /** ResolutionManager owner, so the UI can gate the owner-only resolve action. */
+  managerOwner: string | null;
 }
 
 export interface DisputeRecord {
@@ -111,6 +115,23 @@ export interface VerdictRecord {
   resolution: string;
   reviewRequired: boolean;
   finalizedAt: bigint;
+}
+
+export interface AppealRecord {
+  id: bigint;
+  disputeId: bigint;
+  appellant: string;
+  reason: string;
+  bond: bigint;
+  createdAt: bigint;
+  /** True once ResolutionManager has compared the core verdict versions. */
+  resolved: boolean;
+  /** True when core finalized a newer verdict version after the appeal opened. */
+  accepted: boolean;
+  /** Core verdict version captured at open, for the supersession comparison. */
+  verdictVersionAtOpen: bigint;
+  /** Verdict recorded when the appeal was resolved (NONE while unresolved). */
+  supersedingVerdict: string;
 }
 
 export interface AgentCourtConfig {
@@ -200,6 +221,21 @@ function mapEvidence(e: any): DisputeEvidence {
     submitter: String(e?.submitter ?? ''),
     description: String(e?.description ?? ''),
     verified: Boolean(e?.verified ?? true),
+  };
+}
+
+function mapAppeal(a: any): AppealRecord {
+  return {
+    id: asBig(a?.id),
+    disputeId: asBig(a?.disputeId),
+    appellant: String(a?.appellant ?? ''),
+    reason: String(a?.reason ?? ''),
+    bond: asBig(a?.bond),
+    createdAt: asBig(a?.createdAt),
+    resolved: Boolean(a?.resolved),
+    accepted: Boolean(a?.accepted),
+    verdictVersionAtOpen: asBig(a?.verdictVersionAtOpen),
+    supersedingVerdict: verdictFromNum(Number(a?.supersedingVerdict ?? 0)),
   };
 }
 
@@ -371,6 +407,22 @@ export class AgentCourt {
     return res.data;
   }
 
+  /** Read against ResolutionManager (appeals + settlement). */
+  private async readManager<T>(method: string, args: unknown[]): Promise<T> {
+    const address = this.config.resolutionManagerAddress;
+    if (!address || /^0x0{40}$/.test(address)) {
+      throw new Error('ResolutionManager address is not configured.');
+    }
+    const res = await this.gl.genCallRaw<T>(address, method, args);
+    if (!res.ok || res.data === undefined) {
+      if (res.error?.kind === 'execution') {
+        throw new ContractExecutionError(method, res.error.executionResult ?? res.error.message);
+      }
+      throw new Error(res.error?.message ?? `Read "${method}" failed.`);
+    }
+    return res.data;
+  }
+
   private async ensureDeployed(): Promise<void> {
     if (this.deployedChecked) return;
     await this.readIc<number>('get_dispute_count', []);
@@ -462,6 +514,42 @@ export class AgentCourt {
     return BigInt(count ?? 0);
   }
 
+  async getAppealCount(disputeId: bigint): Promise<bigint> {
+    const count = await this.readManager<number>('get_appeal_count', [Number(disputeId)]);
+    return BigInt(count ?? 0);
+  }
+
+  async getAppeal(appealId: bigint): Promise<AppealRecord | null> {
+    const a = await this.readManager<any>('get_appeal', [Number(appealId)]);
+    return a ? mapAppeal(a) : null;
+  }
+
+  /** Appeals recorded by ResolutionManager for a dispute (oldest first). */
+  async getDisputeAppeals(disputeId: bigint): Promise<AppealRecord[]> {
+    const ids = await this.readManager<any[]>('get_dispute_appeals', [Number(disputeId)]);
+    const list = (ids ?? []).map((id) => asBig(id));
+    const appeals = await Promise.all(
+      list.map(async (id) => {
+        try {
+          return await this.getAppeal(id);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return appeals.filter((a): a is AppealRecord => a !== null);
+  }
+
+  /** ResolutionManager owner (null when the manager is not configured). */
+  async getManagerOwner(): Promise<string | null> {
+    try {
+      const owner = await this.readManager<string>('get_owner', []);
+      return owner ? String(owner) : null;
+    } catch {
+      return null;
+    }
+  }
+
   async loadDisputeDetail(disputeId: bigint): Promise<DisputeDetailData> {
     await this.ensureDeployed();
 
@@ -489,13 +577,16 @@ export class AgentCourt {
       }),
     );
 
-    const [verdict, consensus, evaluation] = await Promise.all([
+    const [verdict, consensus, evaluation, appeals, managerOwner] = await Promise.all([
       this.getVerdict(disputeId),
       this.getConsensusRecords(disputeId),
       this.getEvaluation(disputeId),
+      // Appeals/owner live on ResolutionManager; degrade gracefully if unwired.
+      this.getDisputeAppeals(disputeId).catch(() => [] as AppealRecord[]),
+      this.getManagerOwner(),
     ]);
 
-    return { dispute, evidence, verdict, consensus, evaluation };
+    return { dispute, evidence, verdict, consensus, evaluation, appeals, managerOwner };
   }
 
   async getDisputeCount(): Promise<bigint> {
@@ -689,6 +780,21 @@ export class AgentCourt {
   async openAppeal(disputeId: bigint, reason: string): Promise<void> {
     const hash = await this.writeCore('open_appeal', [Number(disputeId), reason]);
     this.noteTx(disputeId, 'open_appeal', hash);
+  }
+
+  /**
+   * Close out an appeal after re-evaluation. Owner-only on ResolutionManager:
+   * the outcome is derived by comparing core's verdict version against the one
+   * captured when the appeal opened — no verdict is ever supplied by the caller.
+   * `disputeId` is only used for this session's tx-link log.
+   */
+  async resolveAppeal(appealId: bigint, disputeId?: bigint): Promise<void> {
+    this.requireConnected();
+    await this.ensureWriteAccountMatches();
+    const hash = await this.gl.genWrite(this.config.resolutionManagerAddress, 'resolve_appeal', [
+      Number(appealId),
+    ]);
+    if (disputeId !== undefined) this.noteTx(disputeId, 'resolve_appeal', hash);
   }
 
   async executeSettlement(disputeId: bigint): Promise<void> {
