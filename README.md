@@ -131,7 +131,7 @@ Connect a wallet on chain **61999** (the UI offers to switch/add the network), t
 ### 3. Run the checks
 
 ```bash
-pytest tests/unit/ -v                 # 57 Python acceptance tests (IC workflow, caller isolation, appeal flow)
+pytest tests/unit/ -v                 # 58 Python acceptance tests (IC workflow, caller isolation, appeal flow)
 npm test                              # vitest domain tests
 npm run typecheck && npm run build    # TypeScript + Vite build
 GENVM_VERSION=v0.3.0-rc7 genvm-lint check intelligent-contracts/core/agentcourt_core.py
@@ -175,9 +175,9 @@ ResolutionManager (Python IC)
   └── execute_settlement(dispute_id)   # reads core.get_verdict() via view()
 ```
 
-**Appeal path:** `openAppeal` → `requestEvaluation` (re-run while `APPEALED`) → `finalizeVerdict` (superseding version) → `resolveAppeal` (owner-only) → `executeSettlement`.
+**Appeal path:** `openAppeal` → `requestEvaluation` (re-run while `APPEALED`) → `finalizeVerdict` (superseding version) → `resolveAppeal` (ResolutionManager owner-only; accepted only when the core verdict version advanced past the version captured at open) → `executeSettlement`.
 
-**Caller isolation invariant:** `CALLER INPUT ≠ FINAL VERDICT` — `finalize_verdict`, `execute_settlement`, and `resolve_appeal` accept only an ID; verdict, confidence, resolution, and appeal outcomes are all derived from stored protocol state. Resolving an appeal is additionally restricted to the ResolutionManager owner.
+**Caller isolation invariant:** `CALLER INPUT ≠ FINAL VERDICT` — `finalize_verdict`, `execute_settlement`, and `resolve_appeal` accept only an ID; verdict, confidence, resolution, and appeal outcomes are all derived from stored protocol state. Resolving an appeal is additionally restricted to the ResolutionManager owner, and is accepted only when core's verdict version advanced past the version captured at appeal open — a verdict value that changed without a superseding `finalizeVerdict` does not count as accepted.
 
 **Fail-closed:** `reviewRequired` verdicts, the `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` states, and any unresolved appeal refuse settlement (freeze), never auto-release.
 
@@ -224,7 +224,7 @@ agentcourt/
 ## Quality & verification
 
 - **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.get`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
-- **Tests:** 57 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
+- **Tests:** 58 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
 - **CI:** `genvm-lint check` on both ICs, `pytest`, frontend build (`.github/workflows/ci.yml`).
 - **Audit trail:** [`AUDIT.md`](AUDIT.md) documents the verbatim GenLayer Portal rejection, every defect, and the remediation.
 

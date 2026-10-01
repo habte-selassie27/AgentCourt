@@ -186,10 +186,16 @@ openAppeal (finalized verdict → status APPEALED)
 start re-evaluation by itself. The party then calls `requestEvaluation` from the
 `APPEALED` state, `finalizeVerdict` commits a superseding verdict (version +1, prior
 verdict marked `superseded`), and only then does the owner call `resolveAppeal`.
-Resolution sets `accepted = true` when core's verdict version is higher than the
-version captured at open, and does nothing else. Settlement is refused while the
-dispute is `APPEALED` **and** while the appeal record is still unresolved — so it
-only runs after `resolveAppeal`, from the superseding verdict.
+
+Resolution is version-driven, not value-driven: it accepts the appeal (`accepted = true`)
+**only** when core's verdict version is strictly higher than `verdictVersionAtOpen`, i.e.
+when a superseding `finalizeVerdict` has already run. If core's verdict changed value but
+did not advance in version, the appeal is recorded as resolved but not accepted. The outcome
+(the accepted flag, the stored `supersedingVerdict`) is derived by the manager from core;
+no caller ever supplies a superseding verdict.
+
+Settlement is refused while the dispute is `APPEALED` **and** while the appeal record is
+still unresolved — so it only runs after `resolveAppeal`, from the superseding verdict.
 
 ---
 
@@ -242,10 +248,15 @@ pause() / unpause()
 ### Write Methods
 
 ```python
-open_appeal(dispute_id, appellant, reason)   # called by AgentCourtCore
-resolve_appeal(appeal_id)                    # ResolutionManager owner only
+open_appeal(dispute_id, appellant, reason)   # called by AgentCourtCore only
+resolve_appeal(appeal_id)                    # ResolutionManager owner only; compares core verdict versions, no caller verdict
 execute_settlement(dispute_id)               # AgentCourtCore only; idempotent
 ```
+
+`resolve_appeal` is accepted iff core's current verdict version is strictly higher
+than the version captured when the appeal opened — i.e. re-evaluation already
+finalized a superseding verdict. A changed verdict value without a version bump is
+recorded as not accepted. No caller-supplied verdict is accepted.
 
 ### Read Methods
 

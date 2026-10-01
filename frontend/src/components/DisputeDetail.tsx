@@ -335,13 +335,15 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           <button
             className="btn btn-secondary"
             disabled={!canResolveAppeal || actionBusy !== null}
-            title="ResolutionManager owner only: derives the outcome by comparing core verdict versions"
+            title="ResolutionManager owner only: compares core verdict versions; accepted iff the verdict version increased after re-evaluation"
             onClick={() =>
               openAppeal &&
               void runAction(
                 'resolveAppeal',
                 () => getCourt().resolveAppeal(openAppeal.id, disputeId),
-                'Appeal resolved from core verdict versions.',
+                openAppeal.accepted
+                  ? 'Appeal resolved — superseding verdict accepted.'
+                  : 'Appeal resolved — no superseding verdict found; appeal recorded as not accepted.',
               )
             }
           >

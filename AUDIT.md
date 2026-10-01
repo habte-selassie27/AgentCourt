@@ -16,6 +16,7 @@
 | UI advertised an appeal but never showed appeal state or the resolution action | `DisputeDetail` reads ResolutionManager appeals + owner, shows appeal status, and gates an owner-only **Resolve Appeal** action; SDK gains `resolveAppeal` + appeal reads |
 | Docs described `openAppeal` as "triggers re-evaluation" and omitted the source of resolution authority | DEVELOPER_GUIDE / ARCHITECTURE / README / PROTOCOL now document `openAppeal → requestEvaluation → finalizeVerdict (superseding) → resolveAppeal (owner) → executeSettlement` |
 | After a superseding verdict the status returns to `VERDICT` while the appeal was still open, so `execute_settlement` could move funds before `resolve_appeal` | `execute_settlement` now refuses while any appeal is unresolved; UI disables **Execute Settlement** until the appeal is resolved |
+| `resolve_appeal` also accepted an appeal when only the verdict *value* differed, contradicting the documented "accepted iff the verdict version increased" rule | Acceptance is now version-driven only; a changed verdict without a superseding `finalize_verdict` is recorded as not accepted (regression test added) |
 
 ### Appeal flow (implemented)
 
@@ -32,7 +33,7 @@ finalize_verdict (v1, status VERDICT)
 Tests: `TestAppealFlow` (re-evaluation from `APPEALED`, superseding version + prior
 marked superseded, duplicate appeal rejected, settlement blocked until the appeal is
 resolved) and `TestResolveAppealAuthorization` (owner-only resolve, accepted on version
-bump, not accepted otherwise, no double resolve).
+bump, not accepted without one — including a verdict-only change, no double resolve).
 
 ## Root Cause
 
@@ -155,7 +156,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 |---|---|
 | `genvm-lint lint` (both ICs) | ✓ 3 checks each |
 | `genvm-lint check` (both ICs) | ✓ lint + validation (with `GENVM_VERSION=v0.3.0-rc7`) |
-| `pytest tests/unit/ -q` | ✓ 55 passed (incl. `TestAppealFlow`, `TestResolveAppealAuthorization`) |
+| `pytest tests/unit/ -q` | ✓ 58 passed (incl. `TestAppealFlow`, `TestResolveAppealAuthorization`) |
 | `npm run typecheck` | ✓ |
 | `npm test` | ✓ 28 vitest tests |
 | `npm run build` | ✓ vite build |

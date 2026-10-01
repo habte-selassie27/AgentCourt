@@ -84,6 +84,12 @@ class ResolutionManager(gl.Contract):
 
     Settlement accepts only a dispute id and reads the authoritative verdict
     from AgentCourtCore — callers cannot supply verdicts or actions.
+
+    Appeals are opened by AgentCourtCore only. Resolving an appeal is
+    owner-only and is purely administrative: it compares the core verdict
+    version at open with the current core verdict version and records whether
+    a superseding verdict was finalized. No caller-supplied verdict ever reaches
+    the manager.
     """
 
     owner: Address
@@ -161,6 +167,10 @@ class ResolutionManager(gl.Contract):
 
     @gl.public.write
     def open_appeal(self, dispute_id, appellant, reason):
+        """Called by AgentCourtCore only. Records an appeal against a finalized
+        verdict and captures the core verdict version at open, so resolution can
+        tell whether re-evaluation later produced a superseding verdict.
+        """
         if self.paused:
             raise gl.vm.UserError("Contract is paused")
         if gl.message.sender_address != self.core:
@@ -203,8 +213,9 @@ class ResolutionManager(gl.Contract):
 
         Owner-only: resolving is an administrative close-out that reads the
         superseding verdict from core, so no party or caller can influence it.
-        Re-evaluation must already have produced a version bump in core (or the
-        appeal is recorded as not accepted).
+        Accepted iff core verdict version advanced past verdictVersionAtOpen
+        (i.e. re-evaluation already finalized a superseding verdict). An appeal
+        resolved against an unchanged version is recorded as not accepted.
         """
         if self.paused:
             raise gl.vm.UserError("Contract is paused")
@@ -226,9 +237,9 @@ class ResolutionManager(gl.Contract):
         opened_version = int(appeal.get("verdictVersionAtOpen", 0))
         current_verdict = int(current.get("verdict", 0))
 
-        if current_version > opened_version or (
-            current_verdict != int(appeal.get("verdictAtOpen", 0))
-        ):
+        # Acceptance is version-driven only: a verdict value that differs without a
+        # version bump did not come from a superseding finalize_verdict.
+        if current_version > opened_version:
             appeal["accepted"] = True
             appeal["supersedingVerdict"] = current_verdict
         else:

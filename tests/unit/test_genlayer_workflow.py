@@ -861,6 +861,18 @@ class TestResolveAppealAuthorization:
         assert manager.resolve_appeal(aid) is False
         assert manager.get_appeal(aid)["accepted"] is False
 
+    def test_verdict_change_without_version_bump_is_not_accepted(self):
+        """Acceptance is version-driven: a verdict value that differs without a
+        superseding finalize_verdict must not be recorded as accepted."""
+        state = {"verdict": VERDICT_TRUE, "version": 1}
+        manager, aid = self._manager_with_appeal(state)
+        state["verdict"] = VERDICT_FALSE
+        _Message.sender_address = RESET_SENDER
+        assert manager.resolve_appeal(aid) is False
+        appeal = manager.get_appeal(aid)
+        assert appeal["accepted"] is False
+        assert appeal["supersedingVerdict"] == 0
+
     def test_appeal_cannot_be_resolved_twice(self):
         manager, aid = self._manager_with_appeal({"verdict": VERDICT_TRUE, "version": 1})
         _Message.sender_address = RESET_SENDER
