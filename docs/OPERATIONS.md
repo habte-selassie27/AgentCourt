@@ -115,8 +115,6 @@ Active CLI account: `rabby` `0x5b3661c576c7001e6d6279c67f3779705d334c89` — **i
 
 | Address | What it is |
 |---|---|
-| `0x8e634ED901E30b84987dF25f283429c8A8f49F85` | Parallel manual-deploy core (`set_core`-wired to `0xd7F8…` below); **not** the advertised pair |
-| `0xd7F85FA25e253ed34946C1aF58c5e4d26E53C619` | Parallel manual-deploy manager (`set_core` ACCEPTED → `0x8e63…`); superseded — the advertised pair is the row above |
 | `0xeFc4318024F63ca06CC138B354D6539c9841A3B4` | Prior current core (post-`run_nondet`); superseded by manual Studio redeploy (appeal-flow fix) |
 | `0x4c63c9C105AD80A905456c986A027BDA46F9687a` | Prior current manager; superseded by manual Studio redeploy (appeal-flow fix) |
 | `0xEC3d5e5375823F936d6Adb2F4541aa8966672578` | Prior current core (pre-`run_nondet` fix); superseded by redeploy |
