@@ -175,15 +175,17 @@ createDispute → submitEvidence → startInvestigation → requestEvaluation
       → finalizeVerdict → executeSettlement
 
 Appeal path (re-evaluation is explicit, not automatic):
-openAppeal (finalized verdict → status APPEALED)
+openAppeal (live, unsettled verdict → status APPEALED)
       → requestEvaluation (allowed while the appeal is open)
             → finalizeVerdict (writes a superseding, higher-version verdict)
                   → resolveAppeal (owner only; compares core verdict versions)
                         → executeSettlement (blocked until resolveAppeal; then settles the superseding verdict)
 ```
 
-`openAppeal` records the appeal and moves the dispute to `APPEALED`; it does **not**
-start re-evaluation by itself. The party then calls `requestEvaluation` from the
+`openAppeal` requires a live, unsettled `VERDICT` — a settled (`CLOSED`) dispute is
+final, since settlement is idempotent and an appeal after it could never execute. It
+records the appeal and moves the dispute to `APPEALED`; it does **not** start
+re-evaluation by itself. The party then calls `requestEvaluation` from the
 `APPEALED` state, `finalizeVerdict` commits a superseding verdict (version +1, prior
 verdict marked `superseded`), and only then does the owner call `resolveAppeal`.
 

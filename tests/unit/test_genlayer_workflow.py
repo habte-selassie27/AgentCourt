@@ -820,6 +820,37 @@ class TestAppealFlow:
         core.execute_settlement(did)
         assert core.get_dispute(did)["status"] == core_mod.STATUS_CLOSED
 
+    def test_appeal_requires_a_finalized_verdict(self, monkeypatch):
+        """A dispute that has not reached VERDICT cannot be appealed."""
+        core = make_core(self.MANAGER)
+        did = open_dispute(core)
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [])
+        _Message.sender_address = PARTY_A
+        with pytest.raises(_UserError):
+            core.open_appeal(did, "premature")
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_EVIDENCE_COLLECTION
+
+    def test_appeal_rejected_after_dispute_closed(self, monkeypatch):
+        """A settled dispute is final: settlement is idempotent, so an appeal
+        opened after CLOSED could never execute. The advertised flow is
+        VERDICT -> appeal -> re-evaluate -> resolve -> settle."""
+        core, did = self._open_appealed_dispute(monkeypatch)
+        register_contract_view(self.MANAGER, "get_dispute_appeals", lambda _did: [1])
+        register_contract_view(
+            self.MANAGER, "get_appeal", lambda _aid: {"id": 1, "resolved": True}
+        )
+        stub_nondet(monkeypatch, [REFUTED, REFUTED, REFUTED, REFUTED])
+        core.request_evaluation(did)
+        core.finalize_verdict(did)
+
+        _Message.sender_address = PARTY_A
+        core.execute_settlement(did)
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_CLOSED
+
+        with pytest.raises(_UserError):
+            core.open_appeal(did, "appeal after close")
+        assert core.get_dispute(did)["status"] == core_mod.STATUS_CLOSED
+
 
 class TestResolveAppealAuthorization:
     CORE = "0x00000000000000000000000000000000000000c5"

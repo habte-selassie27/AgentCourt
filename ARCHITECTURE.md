@@ -36,7 +36,7 @@ Claim → Evidence → Investigation → Nondeterministic Evaluation
 
 ```
 finalize_verdict (v1, status VERDICT)
-  → open_appeal            (party/owner; status APPEALED; one open appeal at a time)
+  → open_appeal            (party/owner; requires status VERDICT; status APPEALED; one open appeal at a time)
   → request_evaluation     (allowed from APPEALED — re-runs the nondet pipeline)
   → finalize_verdict       (v2 supersedes v1; prior stored as "<dispute>:v1", superseded=true)
   → resolve_appeal         (ResolutionManager owner only)
@@ -45,6 +45,9 @@ finalize_verdict (v1, status VERDICT)
 ```
 
 - `open_appeal` never runs evaluation itself; it records the appeal and flips status.
+  It requires an unsettled `VERDICT`: a settled dispute (`SETTLEMENT` / `CLOSED`) is
+  final because settlement is idempotent, so an appeal opened afterwards could never
+  execute and would only strand the dispute in `APPEALED`.
 - `resolve_appeal` takes no verdict: it only compares core's current verdict version
   against `verdictVersionAtOpen`, so a caller cannot fabricate the superseding outcome.
 - `execute_settlement` refuses unless status is `VERDICT` **and** no appeal is

@@ -1072,8 +1072,12 @@ class AgentCourtCore(gl.Contract):
     def open_appeal(self, dispute_id, reason):
         self._require_not_paused()
         dispute = self._load_dispute(dispute_id)
-        if dispute["status"] not in (STATUS_VERDICT, STATUS_CLOSED, STATUS_APPEALED):
-            raise gl.vm.UserError("Appeal requires a finalized verdict")
+        # Appeals apply only to a live verdict. A settled dispute (SETTLEMENT /
+        # CLOSED) is final: settlement is idempotent, so an appeal opened after
+        # it could never produce an executable outcome and would only strand the
+        # dispute in APPEALED.
+        if dispute["status"] != STATUS_VERDICT:
+            raise gl.vm.UserError("Appeal requires a finalized, unsettled verdict")
         if not self._is_party_or_owner(dispute):
             raise gl.vm.UserError("Not a dispute party")
         # One open appeal at a time; resolve it (via ResolutionManager) before a

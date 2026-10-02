@@ -97,10 +97,10 @@ The live frontend is bound to the two contracts below via `VITE_AGENTCOURT_CORE`
 
 | Contract | Address |
 |---|---|
-| **AgentCourtCore** | [`0xeFc4318024F63ca06CC138B354D6539c9841A3B4`](https://explorer-studio.genlayer.com/address/0xeFc4318024F63ca06CC138B354D6539c9841A3B4) |
-| **ResolutionManager** | [`0x4c63c9C105AD80A905456c986A027BDA46F9687a`](https://explorer-studio.genlayer.com/address/0x4c63c9C105AD80A905456c986A027BDA46F9687a) |
+| **AgentCourtCore** | [`0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa`](https://explorer-studio.genlayer.com/address/0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa) |
+| **ResolutionManager** | [`0x71B7d4D4c78B494451ac00b960C69A851e766476`](https://explorer-studio.genlayer.com/address/0x71B7d4D4c78B494451ac00b960C69A851e766476) |
 
-`set_core` **must be wired once** by the manager owner (owner of this deployment: `0x5B36…4c89`). There is **no Solidity path** — both contracts are Python GenLayer Intelligent Contracts.
+`set_core` **is wired** for this deployment (manager owner: `0x5B36…4c89`). There is **no Solidity path** — both contracts are Python GenLayer Intelligent Contracts.
 
 ## How to use it
 
@@ -126,12 +126,12 @@ Connect a wallet on chain **61999** (the UI offers to switch/add the network), t
 3. **Request evaluation** — live web fetch of evidence URLs + 4 LLM evaluators + adversarial review under validator consensus (takes minutes)
 4. **Finalize verdict** — no inputs; derived from the stored evaluation
 5. **Execute settlement** — only when `reviewRequired` is false and no appeal is open
-6. **Appeal** (optional) — **Open appeal** moves the dispute to `APPEALED`; re-run **Request evaluation** (allowed while the appeal is open), **Finalize verdict** to write a superseding, higher-version verdict, then the ResolutionManager owner calls **Resolve appeal** (compares core verdict versions); settlement is refused until that call closes the appeal
+6. **Appeal** (optional, only from a live `VERDICT`) — **Open appeal** moves the dispute to `APPEALED`; re-run **Request evaluation** (allowed while the appeal is open), **Finalize verdict** to write a superseding, higher-version verdict, then the ResolutionManager owner calls **Resolve appeal** (compares core verdict versions); settlement is refused until that call closes the appeal. A settled (`CLOSED`) dispute is final and cannot be appealed
 
 ### 3. Run the checks
 
 ```bash
-pytest tests/unit/ -v                 # 58 Python acceptance tests (IC workflow, caller isolation, appeal flow)
+pytest tests/unit/ -v                 # 60 Python acceptance tests (IC workflow, caller isolation, appeal flow)
 npm test                              # vitest domain tests
 npm run typecheck && npm run build    # TypeScript + Vite build
 GENVM_VERSION=v0.3.0-rc7 genvm-lint check intelligent-contracts/core/agentcourt_core.py
@@ -195,7 +195,7 @@ agentcourt/
 │   ├── components/                    # dashboard, detail, forms, explorers
 │   └── dispute|evidence|verdict|settlement/
 ├── tests/
-│   ├── unit/test_genlayer_workflow.py # 57 acceptance tests
+│   ├── unit/test_genlayer_workflow.py # 60 acceptance tests
 │   ├── genlayer_stub.py               # CPython stub of the genlayer module
 │   └── sdk.agentcourt.test.ts         # vitest domain tests
 ├── docs/                              # PROTOCOL, DEVELOPER_GUIDE, OPERATIONS, …
@@ -224,7 +224,7 @@ agentcourt/
 ## Quality & verification
 
 - **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.get`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
-- **Tests:** 58 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
+- **Tests:** 60 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
 - **CI:** `genvm-lint check` on both ICs, `pytest`, frontend build (`.github/workflows/ci.yml`).
 - **Audit trail:** [`AUDIT.md`](AUDIT.md) documents the verbatim GenLayer Portal rejection, every defect, and the remediation.
 

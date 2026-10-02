@@ -22,7 +22,8 @@
 
 ```
 finalize_verdict (v1, status VERDICT)
-  → open_appeal        (party/owner; status APPEALED; one open appeal at a time)
+  → open_appeal        (party/owner; requires status VERDICT; status APPEALED;
+                        one open appeal at a time; a SETTLEMENT/CLOSED dispute is final)
   → request_evaluation (allowed from APPEALED)
   → finalize_verdict   (v2 supersedes v1; prior stored as "<dispute>:v1", superseded=true)
   → resolve_appeal     (ResolutionManager owner only; accepted = v2 > v1)
@@ -31,8 +32,9 @@ finalize_verdict (v1, status VERDICT)
 ```
 
 Tests: `TestAppealFlow` (re-evaluation from `APPEALED`, superseding version + prior
-marked superseded, duplicate appeal rejected, settlement blocked until the appeal is
-resolved) and `TestResolveAppealAuthorization` (owner-only resolve, accepted on version
+marked superseded, duplicate appeal rejected, appeal requires a finalized verdict,
+settlement blocked until the appeal is resolved, and no appeal after CLOSED) and
+`TestResolveAppealAuthorization` (owner-only resolve, accepted on version
 bump, not accepted without one — including a verdict-only change, no double resolve).
 
 ## Root Cause
@@ -156,7 +158,7 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 |---|---|
 | `genvm-lint lint` (both ICs) | ✓ 3 checks each |
 | `genvm-lint check` (both ICs) | ✓ lint + validation (with `GENVM_VERSION=v0.3.0-rc7`) |
-| `pytest tests/unit/ -q` | ✓ 58 passed (incl. `TestAppealFlow`, `TestResolveAppealAuthorization`) |
+| `pytest tests/unit/ -q` | ✓ 60 passed (incl. `TestAppealFlow`, `TestResolveAppealAuthorization`) |
 | `npm run typecheck` | ✓ |
 | `npm test` | ✓ 28 vitest tests |
 | `npm run build` | ✓ vite build |
@@ -166,8 +168,8 @@ Fail-closed: `EVALUATION_FAILED` / `INCONCLUSIVE` / `DISPUTED` never auto-settle
 
 ## Remaining Issues
 
-0. **Redeploy required after the appeal-flow fix.** Both IC sources changed (`request_evaluation` now allows `APPEALED`; `open_appeal` rejects duplicate open appeals; `resolve_appeal` is owner-only), so the currently linked Studionet pair below is **stale**. Re-run `scripts/deploy/deploy.sh`, re-wire `set_core`, and update the portal contract links before resubmitting.
-1. **Studionet current pair (deploy.sh, post-`run_nondet` and calldata-safe serialization fixes)** — `ResolutionManager` `0x4c63c9C105AD80A905456c986A027BDA46F9687a`, `AgentCourtCore` `0xeFc4318024F63ca06CC138B354D6539c9841A3B4`. Owner `0x5B36…4c89` (= active CLI account `rabby`). **`set_core` wired** (ACCEPTED). Superseded pairs include Core `0xC84a76b2…B4cbD` / Manager `0x6E2aabaf…e72a` (serialization fix, adversarial parser fallback), Core `0x9aBcF35B…aCbF6` / Manager `0x2e9f5e39…D29BF`, and the manual Studio pair Core `0xEC3d5e53…2578` / Manager `0xb3f14B55…E530`.
+0. **Redeploy done.** Both ICs were re-deployed after the appeal-flow fix (`request_evaluation` now allows `APPEALED`; `open_appeal` rejects duplicate open appeals; `resolve_appeal` is owner-only), and the new pair below is wired (`set_core` → core). Portal contract links updated.
+1. **Studionet current pair (manual Studio deploy, appeal-flow fix)** — `ResolutionManager` `0x71B7d4D4c78B494451ac00b960C69A851e766476`, `AgentCourtCore` `0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa`. Owner `0x5B36…4c89` (= active CLI account `rabby`). **`set_core` wired** (`get_core` → `0x564d…19aa`, ACCEPTED). Superseded pairs include Core `0xeFc43180…A3B4` / Manager `0x4c63c9C1…687a` (prior post-`run_nondet` deploy, now stale), Core `0xC84a76b2…B4cbD` / Manager `0x6E2aabaf…e72a` (serialization fix, adversarial parser fallback), Core `0x9aBcF35B…aCbF6` / Manager `0x2e9f5e39…D29BF`, and the manual Studio pair Core `0xEC3d5e53…2578` / Manager `0xb3f14B55…E530`.
 2. **No private keys in git history** — `.env` is gitignored and has never been committed (`git log --all -- .env` is empty). The local `.env` private key was redacted to a placeholder; rotate it anyway before any production use.
 3. **Stake/bond economic enforcement** is metadata-level (recorded amounts); real fund custody needs a GenLayer value-transfer / escrow design beyond this remediation.
 4. **LLM cost/latency** for `request_evaluation` is non-trivial (4+ prompts per run); cache or reduce roles for high-volume demos.

@@ -224,9 +224,10 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
     !verdict.reviewRequired &&
     openAppeal === null &&
     Boolean(signer);
-  // Only one open appeal at a time; core rejects a second one.
+  // Appeals attach to a live, unsettled verdict only: a CLOSED dispute is final
+  // on-chain. Only one open appeal at a time; core rejects a second one.
   const canAppeal =
-    (status === 'VERDICT' || status === 'CLOSED') && isDisputeParty && openAppeal === null;
+    status === 'VERDICT' && isDisputeParty && openAppeal === null;
 
   const tabs: { key: DetailTab; label: string; visible: boolean }[] = [
     { key: 'timeline', label: 'Timeline', visible: true },
