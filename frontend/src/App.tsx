@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
+import { HomePage } from './components/HomePage';
 import { DisputeDashboard } from './components/DisputeDashboard';
 import { DisputeDetail } from './components/DisputeDetail';
 import { CreateDisputeForm } from './components/CreateDisputeForm';
 import { GENLAYER_EXPLORER_URL, getCourt } from './sdk';
 
-type View = 'dashboard' | 'create' | 'detail';
+type View = 'home' | 'dashboard' | 'create' | 'detail';
 
 declare global {
   interface Window {
@@ -13,7 +14,7 @@ declare global {
 }
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [currentView, setCurrentView] = useState<View>('home');
   const [selectedDisputeId, setSelectedDisputeId] = useState<bigint | null>(null);
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
@@ -135,6 +136,12 @@ function App() {
     setCurrentView('detail');
   };
 
+  const navItems: { key: View; label: string }[] = [
+    { key: 'home', label: 'Home' },
+    { key: 'dashboard', label: 'Dashboard' },
+    { key: 'create', label: 'Create Dispute' },
+  ];
+
   const shortAddress = walletAddress
     ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
     : '';
@@ -149,23 +156,18 @@ function App() {
             <span className="brand-tagline">Autonomous arbitration · GenLayer Studionet</span>
           </span>
         </div>
-        <nav>
-          <button
-            type="button"
-            className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
-            aria-current={currentView === 'dashboard' ? 'page' : undefined}
-            onClick={() => setCurrentView('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button
-            type="button"
-            className={`nav-link ${currentView === 'create' ? 'active' : ''}`}
-            aria-current={currentView === 'create' ? 'page' : undefined}
-            onClick={() => setCurrentView('create')}
-          >
-            Create Dispute
-          </button>
+        <nav aria-label="Primary">
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`nav-link ${currentView === item.key ? 'active' : ''}`}
+              aria-current={currentView === item.key ? 'page' : undefined}
+              onClick={() => setCurrentView(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
           {wrongChain && (
             <button className="btn btn-warning" onClick={handleSwitchChain}>
               Switch to GenLayer
@@ -195,6 +197,12 @@ function App() {
       )}
 
       <main className="container">
+        {currentView === 'home' && (
+          <HomePage
+            onGoToDashboard={() => setCurrentView('dashboard')}
+            onCreateDispute={() => setCurrentView('create')}
+          />
+        )}
         {currentView === 'dashboard' && (
           <DisputeDashboard
             onViewDispute={handleViewDispute}
@@ -213,6 +221,18 @@ function App() {
       </main>
 
       <footer className="footer">
+        <nav className="footer-nav" aria-label="Footer">
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`footer-link ${currentView === item.key ? 'active' : ''}`}
+              onClick={() => setCurrentView(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
         <span>AgentCourt · GenLayer Studionet (61999) · Intelligent Contracts, no Solidity path</span>
         <span>
           <a href={GENLAYER_EXPLORER_URL} target="_blank" rel="noreferrer">Explorer</a>
