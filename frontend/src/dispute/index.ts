@@ -107,6 +107,29 @@ export interface TimelineEntry {
   active: boolean;
 }
 
+/**
+ * True when the stored evaluation already covers the current case, so
+ * re-running it would only repeat the LLM + validator-consensus cost.
+ *
+ * It stops covering the case when:
+ * - there is no evaluation, or the run failed (retryable),
+ * - evidence was submitted after the run finished, or
+ * - an appeal opened after the run (that re-run is what produces the
+ *   superseding verdict the appeal resolver compares against).
+ */
+export function evaluationCoversCase(input: {
+  evaluation: { ok: boolean; evaluatedAt: number } | null;
+  newestEvidenceTs: bigint;
+  appealCreatedAt?: bigint | null;
+}): boolean {
+  const { evaluation, newestEvidenceTs, appealCreatedAt } = input;
+  if (!evaluation || !evaluation.ok) return false;
+  const evaluatedAt = BigInt(evaluation.evaluatedAt);
+  if (newestEvidenceTs > evaluatedAt) return false;
+  if (appealCreatedAt != null && evaluatedAt < appealCreatedAt) return false;
+  return true;
+}
+
 interface TimelineInput {
   status: string;
   createdAt: bigint;

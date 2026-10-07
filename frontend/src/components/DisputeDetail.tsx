@@ -16,6 +16,7 @@ import {
   getStatusClass,
   disputeIdLabel,
   buildTimeline,
+  evaluationCoversCase,
 } from '../dispute';
 import { evidenceIdLabel } from '../evidence';
 import { confidencePercent, computeConsensus, buildConsensusSummary, type EvaluatorRecord } from '../verdict';
@@ -199,6 +200,20 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
 
   const canInvestigate =
     (status === 'EVIDENCE_COLLECTION' || status === 'OPEN') && isDisputeParty;
+
+  // A completed evaluation already covers the case unless something actually
+  // changed (see evaluationCoversCase): once it does, re-running only repeats
+  // the LLM + validator-consensus cost, so Request Evaluation is disabled and
+  // the next step becomes Finalize Verdict.
+  const newestEvidenceTs = evidence.reduce(
+    (max, item) => (item.timestamp > max ? item.timestamp : max),
+    0n,
+  );
+  const evaluationFresh = evaluationCoversCase({
+    evaluation,
+    newestEvidenceTs,
+    appealCreatedAt: openAppeal?.createdAt ?? null,
+  });
   // On-chain: allowed from the evaluation states, from APPEALED, and from a
   // VERDICT that still carries an unresolved appeal (re-run to supersede).
   const canEvaluate =
@@ -213,7 +228,8 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
       'APPEALED',
     ].includes(status) ||
       (status === 'VERDICT' && openAppeal !== null)) &&
-    isDisputeParty;
+    isDisputeParty &&
+    !evaluationFresh;
   // finalize_verdict / execute_settlement have no party check on-chain.
   const canFinalize =
     ['CONSENSUS', 'INCONCLUSIVE', 'DISPUTED'].includes(status) && Boolean(signer);
@@ -285,7 +301,11 @@ export function DisputeDetail({ disputeId, onBack }: DisputeDetailProps) {
           <button
             className="btn btn-primary"
             disabled={!canEvaluate || actionBusy !== null}
-            title="Runs independent evaluators + adversarial review under GenLayer validator consensus"
+            title={
+              evaluationFresh
+                ? 'An evaluation for the current evidence already exists — add new evidence (or open an appeal) to re-run it'
+                : 'Runs independent evaluators + adversarial review under GenLayer validator consensus'
+            }
             onClick={() =>
               void runAction(
                 'evaluate',

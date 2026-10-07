@@ -6,6 +6,7 @@ import {
   isActive,
   isResolved,
   buildTimeline,
+  evaluationCoversCase,
 } from '../frontend/src/dispute';
 import { VERDICTS, confidencePercent } from '../frontend/src/verdict';
 import { describeError } from '../frontend/src/sdk/errors';
@@ -101,6 +102,42 @@ describe('buildTimeline', () => {
     expect(byLabel['Verdict finalized: TRUE'].completed).toBe(true);
     expect(byLabel['Settlement executed'].completed).toBe(false);
     expect(byLabel['Dispute closed'].completed).toBe(false);
+  });
+});
+
+describe('evaluationCoversCase', () => {
+  const evaluation = { ok: true, evaluatedAt: 1_000 };
+
+  it('covers the case when the run succeeded and nothing changed since', () => {
+    expect(
+      evaluationCoversCase({ evaluation, newestEvidenceTs: 900n, appealCreatedAt: null }),
+    ).toBe(true);
+  });
+
+  it('does not cover when there is no evaluation or it failed', () => {
+    expect(evaluationCoversCase({ evaluation: null, newestEvidenceTs: 0n })).toBe(false);
+    expect(
+      evaluationCoversCase({
+        evaluation: { ok: false, evaluatedAt: 1_000 },
+        newestEvidenceTs: 0n,
+      }),
+    ).toBe(false);
+  });
+
+  it('re-enables a re-run when evidence arrived after the evaluation', () => {
+    expect(
+      evaluationCoversCase({ evaluation, newestEvidenceTs: 1_001n, appealCreatedAt: null }),
+    ).toBe(false);
+  });
+
+  it('re-enables a re-run for an appeal opened after the evaluation', () => {
+    expect(
+      evaluationCoversCase({ evaluation, newestEvidenceTs: 900n, appealCreatedAt: 1_001n }),
+    ).toBe(false);
+    // Already re-evaluated since the appeal opened → covered (next step: finalize).
+    expect(
+      evaluationCoversCase({ evaluation, newestEvidenceTs: 900n, appealCreatedAt: 999n }),
+    ).toBe(true);
   });
 });
 
