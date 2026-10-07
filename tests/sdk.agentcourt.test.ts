@@ -5,6 +5,7 @@ import {
   disputeIdLabel,
   isActive,
   isResolved,
+  buildTimeline,
 } from '../frontend/src/dispute';
 import { VERDICTS, confidencePercent } from '../frontend/src/verdict';
 import { describeError } from '../frontend/src/sdk/errors';
@@ -34,6 +35,72 @@ describe('dispute domain', () => {
     expect(isResolved('CLOSED')).toBe(true);
     expect(isActive('INVESTIGATION')).toBe(true);
     expect(isActive('EVALUATION_FAILED')).toBe(true);
+  });
+});
+
+describe('buildTimeline', () => {
+  const base = {
+    createdAt: 1791359417n,
+    evidenceCount: 2,
+    consensusCount: 4,
+    hasVerdict: false,
+  };
+
+  const labels = (status: string, extra: Partial<Parameters<typeof buildTimeline>[0]> = {}) =>
+    buildTimeline({ ...base, status, ...extra });
+
+  it('does not mark settlement/closed for INCONCLUSIVE (no verdict yet)', () => {
+    const steps = labels('INCONCLUSIVE');
+    const byLabel = Object.fromEntries(steps.map((s) => [s.label, s]));
+
+    expect(byLabel['Settlement executed'].completed).toBe(false);
+    expect(byLabel['Dispute closed'].completed).toBe(false);
+    expect(byLabel['Verdict finalized (derived, not caller-supplied)'].completed).toBe(false);
+    expect(byLabel['Verdict finalized (derived, not caller-supplied)'].active).toBe(true);
+    expect(byLabel['Evaluation incomplete → INCONCLUSIVE'].completed).toBe(true);
+    expect(byLabel['Investigation started'].completed).toBe(true);
+  });
+
+  it('marks settlement and closed only when the status says so', () => {
+    const settled = Object.fromEntries(
+      labels('SETTLEMENT', { hasVerdict: true }).map((s) => [s.label, s]),
+    );
+    expect(settled['Settlement executed'].completed).toBe(true);
+    expect(settled['Dispute closed'].completed).toBe(false);
+
+    const closed = Object.fromEntries(
+      labels('CLOSED', { hasVerdict: true }).map((s) => [s.label, s]),
+    );
+    expect(closed['Settlement executed'].completed).toBe(true);
+    expect(closed['Dispute closed'].completed).toBe(true);
+  });
+
+  it('keeps consensus pending while evaluation is in flight', () => {
+    const steps = labels('EVALUATION_PENDING', { consensusCount: 0 });
+    const byLabel = Object.fromEntries(steps.map((s) => [s.label, s]));
+
+    expect(byLabel['Nondeterministic evaluation pending'].completed).toBe(false);
+    expect(byLabel['Nondeterministic evaluation pending'].active).toBe(true);
+    expect(byLabel['Consensus evaluation'].completed).toBe(false);
+    expect(byLabel['Settlement executed'].completed).toBe(false);
+  });
+
+  it('shows evaluation outcomes for DISPUTED without inventing a verdict', () => {
+    const steps = labels('DISPUTED');
+    const byLabel = Object.fromEntries(steps.map((s) => [s.label, s]));
+
+    expect(byLabel['Evaluator disagreement → DISPUTED'].completed).toBe(true);
+    expect(byLabel['Settlement executed'].completed).toBe(false);
+    expect(byLabel['Dispute closed'].completed).toBe(false);
+  });
+
+  it('treats APPEALED as post-verdict but unsettled', () => {
+    const steps = labels('APPEALED', { hasVerdict: true, verdictLabel: 'TRUE' });
+    const byLabel = Object.fromEntries(steps.map((s) => [s.label, s]));
+
+    expect(byLabel['Verdict finalized: TRUE'].completed).toBe(true);
+    expect(byLabel['Settlement executed'].completed).toBe(false);
+    expect(byLabel['Dispute closed'].completed).toBe(false);
   });
 });
 

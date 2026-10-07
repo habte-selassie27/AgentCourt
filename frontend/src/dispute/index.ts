@@ -122,10 +122,50 @@ interface TimelineInput {
 /**
  * Builds a dispute timeline from real on-chain state, including evaluation
  * outcomes (pending / consensus / inconclusive / disputed / failed).
+ *
+ * The evaluation-outcome statuses (EVALUATION_PENDING … DISPUTED, APPEALED)
+ * sit *after* CONSENSUS in DISPUTE_STATUSES, so raw index ranking would wrongly
+ * mark settlement/closed as done for them. `phaseRank` maps each status onto the
+ * main-path lifecycle phase it represents, and terminal steps are matched
+ * explicitly instead of by rank.
  */
 export function buildTimeline(input: TimelineInput): TimelineEntry[] {
   const status = input.status;
-  const rank = statusRank(status);
+
+  // Main-path phase reached by this status (evaluation outcomes → CONSENSUS
+  // phase, an appeal → the VERDICT it was opened against).
+  const phaseRank = (s: string): number => {
+    switch (s) {
+      case 'EVALUATION_PENDING':
+      case 'EVALUATION_FAILED':
+      case 'INCONCLUSIVE':
+      case 'DISPUTED':
+      case 'CONSENSUS':
+        return STATUS_INDEX.CONSENSUS;
+      case 'APPEALED':
+        return STATUS_INDEX.VERDICT;
+      default:
+        return statusRank(s);
+    }
+  };
+
+  const rank = phaseRank(status);
+  const evaluationRan =
+    status !== 'EVALUATION_PENDING' &&
+    (status === 'CONSENSUS' ||
+      status === 'INCONCLUSIVE' ||
+      status === 'DISPUTED' ||
+      status === 'EVALUATION_FAILED' ||
+      input.hasVerdict ||
+      rank >= STATUS_INDEX.CONSENSUS);
+  const consensusRecorded =
+    input.consensusCount > 0 ||
+    status === 'CONSENSUS' ||
+    status === 'INCONCLUSIVE' ||
+    status === 'DISPUTED' ||
+    status === 'EVALUATION_FAILED' ||
+    input.hasVerdict;
+  const settled = status === 'SETTLEMENT' || status === 'CLOSED';
 
   const steps: { done: boolean; label: string; time?: string }[] = [
     {
@@ -134,22 +174,16 @@ export function buildTimeline(input: TimelineInput): TimelineEntry[] {
       time: formatTime(input.createdAt),
     },
     {
-      done: rank >= STATUS_INDEX.EVIDENCE_COLLECTION,
+      done: input.evidenceCount > 0 || rank >= STATUS_INDEX.EVIDENCE_COLLECTION,
       label:
         input.evidenceCount > 0
           ? `Evidence recorded (${input.evidenceCount} item${input.evidenceCount === 1 ? '' : 's'})`
           : 'Evidence collection open (no items submitted)',
       time: input.latestEvidenceTime ? formatTime(input.latestEvidenceTime) : undefined,
     },
-    { done: rank >= STATUS_INDEX.INVESTIGATION || rank >= STATUS_INDEX.CONSENSUS, label: 'Investigation started' },
+    { done: rank >= STATUS_INDEX.INVESTIGATION, label: 'Investigation started' },
     {
-      done:
-        status === 'CONSENSUS' ||
-        status === 'INCONCLUSIVE' ||
-        status === 'DISPUTED' ||
-        status === 'EVALUATION_FAILED' ||
-        input.hasVerdict ||
-        rank >= STATUS_INDEX.CONSENSUS,
+      done: evaluationRan,
       label:
         status === 'EVALUATION_FAILED'
           ? 'Evaluation failed (fail-closed)'
@@ -162,8 +196,7 @@ export function buildTimeline(input: TimelineInput): TimelineEntry[] {
                 : 'Nondeterministic evaluation pending',
     },
     {
-      done:
-        status === 'CONSENSUS' || input.hasVerdict || rank >= STATUS_INDEX.CONSENSUS,
+      done: consensusRecorded,
       label:
         input.consensusCount > 0
           ? `Validator-consensus evaluation recorded (${input.consensusCount} evaluators)`
@@ -174,7 +207,7 @@ export function buildTimeline(input: TimelineInput): TimelineEntry[] {
       label: input.verdictLabel ? `Verdict finalized: ${input.verdictLabel}` : 'Verdict finalized (derived, not caller-supplied)',
       time: input.verdictTime ? formatTime(input.verdictTime) : undefined,
     },
-    { done: rank >= STATUS_INDEX.SETTLEMENT || status === 'CLOSED', label: 'Settlement executed' },
+    { done: settled, label: 'Settlement executed' },
     { done: status === 'CLOSED', label: 'Dispute closed' },
   ];
 
