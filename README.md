@@ -97,10 +97,40 @@ The live frontend is bound to the two contracts below via `VITE_AGENTCOURT_CORE`
 
 | Contract | Address |
 |---|---|
-| **AgentCourtCore** | [`0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa`](https://explorer-studio.genlayer.com/address/0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa) |
-| **ResolutionManager** | [`0x71B7d4D4c78B494451ac00b960C69A851e766476`](https://explorer-studio.genlayer.com/address/0x71B7d4D4c78B494451ac00b960C69A851e766476) |
+| **AgentCourtCore** (AgentCourt.py) | [`0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a`](https://explorer-studio.genlayer.com/address/0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a) — [import in Studio](https://studio.genlayer.com/?import-contract=0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a) |
+| **ResolutionManager** (ResolutionManager.py) | [`0xC7225962aB73576087Ff157798Ffb3967E36Ec11`](https://explorer-studio.genlayer.com/address/0xC7225962aB73576087Ff157798Ffb3967E36Ec11) — [import in Studio](https://studio.genlayer.com/?import-contract=0xC7225962aB73576087Ff157798Ffb3967E36Ec11) |
 
-`set_core` **is wired** for this deployment (manager owner: `0x5B36…4c89`). There is **no Solidity path** — both contracts are Python GenLayer Intelligent Contracts.
+`set_core` **is wired** for this deployment (manager → core verified via `get_core`; manager/core owner: `0x5B36…4c89`). There is **no Solidity path** — both contracts are Python GenLayer Intelligent Contracts.
+
+### Verification evidence
+
+To confirm the deployed contracts respond and are wired correctly:
+
+```bash
+CORE=0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a \
+MANAGER=0xC7225962aB73576087Ff157798Ffb3967E36Ec11 \
+./scripts/verification/verify.sh
+# → checks get_dispute_count, get_core wiring, get_owner, is_paused; prints "Verification PASSED"
+```
+
+### Staking escrow
+
+Each party to a dispute can bond its stake on-chain before the window closes:
+
+```
+deposit_stake(dispute_id)   ← @gl.public.write.payable, sender must be claimant/respondent,
+                              value ≥ dispute.stake, one deposit per party
+get_escrow(dispute_id)      ← deposited flag + amounts per party, released/payouts record
+execute_settlement(id)      ← winner refunded its bond and receives the slashed loser bond;
+                              reviewRequired/UNVERIFIABLE/REVIEW keep funds escrowed (fail-closed);
+                              settlement is idempotent — no double release
+```
+
+Live verification scripts (run on Studionet):
+
+- `scripts/verification/smoke_staking.mjs` — deposit, `get_escrow` hold, settlement blocked pre-verdict
+- `scripts/verification/e2e_staking.mjs` — both parties stake → live evaluation → finalize → settle (or fail-closed INCONCLUSIVE retention)
+- `tests/unit/test_escrow_staking.py` — 13 unit cases incl. release math, double-release guard, review-freeze, unauthorized/insufficient/double deposits, case-insensitive party matching
 
 ## How to use it
 
@@ -131,7 +161,7 @@ Connect a wallet on chain **61999** (the UI offers to switch/add the network), t
 ### 3. Run the checks
 
 ```bash
-pytest tests/unit/ -v                 # 60 Python acceptance tests (IC workflow, caller isolation, appeal flow)
+pytest tests/unit/ -v                 # 73 Python acceptance tests (IC workflow, caller isolation, appeal flow, escrow/staking)
 npm test                              # vitest domain tests
 npm run typecheck && npm run build    # TypeScript + Vite build
 GENVM_VERSION=v0.3.0-rc7 genvm-lint check intelligent-contracts/core/agentcourt_core.py
@@ -224,13 +254,13 @@ agentcourt/
 ## Quality & verification
 
 - **Live data:** evidence URLs are fetched inside the nondeterministic block via `gl.nondet.web.get`; all reads/writes go to GenLayer Studionet through `genlayer-js`.
-- **Tests:** 60 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
+- **Tests:** 73 Python acceptance tests (caller isolation, fail-closed paths, consensus classification, appeal flow + resolve authorization + settlement gate, timestamps, Keccak commitments) + 28 vitest tests.
 - **CI:** `genvm-lint check` on both ICs, `pytest`, frontend build (`.github/workflows/ci.yml`).
 - **Audit trail:** [`AUDIT.md`](AUDIT.md) documents the verbatim GenLayer Portal rejection, every defect, and the remediation.
 
 ## Status & disclaimer
 
-AgentCourt is an experimental protocol. Contracts are deployed on **GenLayer Studionet (test infrastructure)** — do not treat them as production arbitration. Stake/bond amounts are recorded as metadata; on-chain fund custody is future work (see `AUDIT.md`).
+AgentCourt is an experimental protocol. Contracts are deployed on **GenLayer Studionet (test infrastructure)** — do not treat them as production arbitration. Staked bonds are held in on-chain escrow by `AgentCourtCore.deposit_stake` and released per the final verdict at `execute_settlement` (see [Staking escrow](#staking-escrow) and `AUDIT.md`).
 
 This software is not legal advice and is not a substitute for jurisdiction-specific arbitration procedures.
 

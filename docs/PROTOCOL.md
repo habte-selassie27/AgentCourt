@@ -609,7 +609,7 @@ Settlement recorded (nonce + resolution + verdict snapshot)
 Dispute Closed
 ```
 
-ResolutionManager re-verifies the verdict by reading it back from AgentCourtCore and refuses when the verdict is missing, frozen (`reviewRequired`), or already settled. Actual fund movement is performed by the integrating escrow/settlement application, which consumes the recorded settlement.
+ResolutionManager re-verifies the verdict by reading it back from AgentCourtCore and refuses when the verdict is missing, frozen (`reviewRequired`), or already settled. Fund custody lives in `AgentCourtCore`: parties escrow their stake via `deposit_stake` (payable), and settlement releases it to the winner (own bond refunded + slashed loser bond) or keeps it escrowed when the verdict is frozen/frozen-by-appeal. Integrators that move funds elsewhere should treat the core escrow record (`get_escrow`) as authoritative.
 
 ## Idempotency
 

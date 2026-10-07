@@ -3,6 +3,14 @@ import { ContractExecutionError, GenLayerClient, explorerTxUrl } from './genlaye
 /** Verdict confidence is stored in basis points: 10000 === 100.00%. */
 export const CONFIDENCE_DENOMINATOR = 10000;
 
+export interface EscrowRecord {
+  disputeId: number;
+  claimant: { deposited: boolean; amount: number };
+  respondent: { deposited: boolean; amount: number };
+  released: boolean;
+  payouts: { to: string; amount: number }[];
+}
+
 export interface ConsensusRecord {
   disputeId: bigint;
   evaluator: string;
@@ -619,7 +627,7 @@ export class AgentCourt {
     deadline: bigint;
   }): Promise<bigint> {
     const before = await this.getDisputeCount();
-    // Stake is metadata only — do not attach value (avoids locking GEN / non-payable failures).
+    // Stake is a recorded bond requirement; the actual funds are escrowed on-chain via depositStake().
     const hash = await this.writeCore(
       'create_dispute',
       [
@@ -653,6 +661,18 @@ export class AgentCourt {
       last = await this.getDisputeCount();
     }
     return last;
+  }
+
+  async depositStake(disputeId: bigint, amount: bigint): Promise<void> {
+    if (amount <= BigInt(0)) throw new Error('Amount must be positive');
+    const hash = await this.writeCore('deposit_stake', [Number(disputeId)], amount);
+    this.noteTx(disputeId, 'deposit_stake', hash);
+  }
+
+  async getEscrow(disputeId: bigint): Promise<EscrowRecord | null> {
+    await this.ensureDeployed();
+    const raw = await this.readIc<EscrowRecord | null>('get_escrow', [Number(disputeId)]);
+    return raw ?? null;
   }
 
   async submitEvidence(

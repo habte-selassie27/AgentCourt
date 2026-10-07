@@ -30,6 +30,7 @@ export type {
   EvaluationConsensus,
   TxLink,
   VerdictRecord,
+  EscrowRecord,
 } from './agentcourt';
 export type {
   Dispute,

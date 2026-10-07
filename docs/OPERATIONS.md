@@ -106,8 +106,8 @@ vercel --prod
 
 | Contract | Address | Tx / notes |
 |---|---|---|
-| ResolutionManager | `0x71B7d4D4c78B494451ac00b960C69A851e766476` | manual Studio deploy (appeal-flow fix); `set_core` **wired** → core (ACCEPTED) |
-| AgentCourtCore | `0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa` | manual Studio deploy (appeal-flow fix); owner `0x5B36…4c89` |
+| ResolutionManager | `0xC7225962aB73576087Ff157798Ffb3967E36Ec11` | Manual Studio deploy (official); `set_core` **wired** → core (ACCEPTED) |
+| AgentCourtCore | `0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a` | Manual Studio deploy (official); owner `0x5B36…4c89` |
 
 Active CLI account: `rabby` `0x5b3661c576c7001e6d6279c67f3779705d334c89` — **is** the manager owner (`set_core` callable from the CLI).
 
@@ -115,8 +115,10 @@ Active CLI account: `rabby` `0x5b3661c576c7001e6d6279c67f3779705d334c89` — **i
 
 | Address | What it is |
 |---|---|
-| `0xeFc4318024F63ca06CC138B354D6539c9841A3B4` | Prior current core (post-`run_nondet`); superseded by manual Studio redeploy (appeal-flow fix) |
-| `0x4c63c9C105AD80A905456c986A027BDA46F9687a` | Prior current manager; superseded by manual Studio redeploy (appeal-flow fix) |
+| `0xBaee7231d1514c3195126012BA753625D3CAc69A` | Prior current core (deploy.sh, escrow feature); superseded by official manual Studio deploy |
+| `0xB7758dAf10cfFD70a8E26732FE100a9B3095daF4` | Prior current manager (deploy.sh, escrow feature); superseded by official manual Studio deploy |
+| `0xeFc4318024F63ca06CC138B354D6539c9841A3B4` | Prior current core (post-`run_nondet`); superseded by deploy.sh redeploy (escrow feature) |
+| `0x4c63c9C105AD80A905456c986A027BDA46F9687a` | Prior current manager; superseded by deploy.sh redeploy (escrow feature) |
 | `0xEC3d5e5375823F936d6Adb2F4541aa8966672578` | Prior current core (pre-`run_nondet` fix); superseded by redeploy |
 | `0xb3f14B5565a4342dc0c111AA8C3674de42B0E530` | Prior current manager (`set_core` taken by old core); superseded by redeploy |
 | `0xBa2e6a6Eb90B543E8F6e65cfeeB606c59577677B` | Prior current core; superseded by redeploy |
@@ -248,8 +250,8 @@ async function checkHealth() {
 ```
 
 ### Explorer Links
-- AgentCourtCore: `0x564dA0faca75a14b7266d19c3Fc1DFD8bc2719aa`
-- ResolutionManager: `0x71B7d4D4c78B494451ac00b960C69A851e766476`
+- AgentCourtCore: `0x2cC0B2285E67cA33db09bDC1Eec9f64F8ea72F3a`
+- ResolutionManager: `0xC7225962aB73576087Ff157798Ffb3967E36Ec11`
 - DisputeRegistry: removed from codebase (legacy: `0x57802A80B38c68a7EbE814F4249a8Ac6768319b4`)
 
 ## Alerting

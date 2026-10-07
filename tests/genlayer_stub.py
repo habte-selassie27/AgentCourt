@@ -8,6 +8,7 @@ provided. Nondeterministic APIs are monkeypatched per-test where needed.
 from __future__ import annotations
 
 import hashlib
+import functools
 import sys
 import types
 from typing import Any, Callable, get_origin
@@ -68,8 +69,55 @@ def _identity_decorator(fn):
     return fn
 
 
+def _run_with_context(self, fn, args, kwargs):
+    """Execute a public write with the executing-contract context set.
+
+    Deposits (payable methods) credit the instance balance from
+    ``_Message.value``; nested ``emit``/``emit_transfer`` calls debit it.
+    """
+    global _EXECUTING_CONTRACT
+    prev = _EXECUTING_CONTRACT
+    _EXECUTING_CONTRACT = self
+    try:
+        return fn(self, *args, **kwargs)
+    finally:
+        _EXECUTING_CONTRACT = prev
+
+
+class _PayableWrite:
+    """Emulates ``@gl.public.write.payable`` / ``@gl.public.write``."""
+
+    def __init__(self, payable: bool = False):
+        self._payable = payable
+
+    def __call__(self, fn):
+        if self._payable:
+            def wrapper(self, *args, **kwargs):
+                amount = int(getattr(_Message, "value", 0) or 0)
+                if amount > 0:
+                    self._native_balance = getattr(self, "_native_balance", 0) + amount
+                return _run_with_context(self, fn, args, kwargs)
+
+            functools.wraps(fn)(wrapper)
+            setattr(wrapper, "__gl_payable__", True)
+            return wrapper
+
+        def wrapper(self, *args, **kwargs):
+            return _run_with_context(self, fn, args, kwargs)
+
+        functools.wraps(fn)(wrapper)
+        setattr(wrapper, "__gl_payable__", False)
+        return wrapper
+
+    def payable(self, fn):
+        return _PayableWrite(payable=True)(fn)
+
+
+_EXECUTING_CONTRACT = None
+
+
 class _Public:
-    write = staticmethod(_identity_decorator)
+    write = _PayableWrite(payable=False)
     view = staticmethod(_identity_decorator)
 
 
@@ -99,10 +147,15 @@ class _Contract:
             for n in tm_names:
                 if n not in self.__dict__:
                     setattr(self, n, TreeMap())
+            if "_native_balance" not in self.__dict__:
+                self.__dict__["_native_balance"] = 0
             if prev is not None:
                 prev(self, *args, **kwargs)
 
         cls.__init__ = _wrapped
+
+        if "balance" not in cls.__dict__:
+            cls.balance = property(lambda self: int(getattr(self, "_native_balance", 0)))
 
 
 class _Message:
@@ -152,6 +205,23 @@ class _VM:
         return _VM.run_nondet_unsafe(leader_fn, validator_fn)
 
 
+_STUB_LEDGER: dict[str, int] = {}
+
+
+def _debit_executing(value: int):
+    if _EXECUTING_CONTRACT is None:
+        raise _UserError("transfer outside write context")
+    bal = int(getattr(_EXECUTING_CONTRACT, "_native_balance", 0))
+    if bal < value:
+        raise _UserError("insufficient contract balance for transfer")
+    _EXECUTING_CONTRACT._native_balance = bal - value
+
+
+def native_balance_of(address) -> int:
+    """Native balance tracked for an account (EOA or contract) by the stub."""
+    return int(_STUB_LEDGER.get(str(address), 0))
+
+
 class _ContractProxy:
     def __init__(self, address):
         self._address = address
@@ -175,8 +245,22 @@ class _ContractProxy:
 
         return _ViewNS()
 
+    @property
+    def address(self):
+        return self._address
+
+    @property
+    def balance(self):
+        return int(_STUB_LEDGER.get(str(self._address), 0))
+
     def emit(self, **kwargs):
         outer = self
+        value = int(kwargs.get("value", 0) or 0)
+        if value:
+            _debit_executing(value)
+            _STUB_LEDGER[str(self._address)] = (
+                _STUB_LEDGER.get(str(self._address), 0) + value
+            )
 
         class _EmitNS:
             def __getattr__(self, item):
@@ -187,6 +271,14 @@ class _ContractProxy:
                 return call
 
         return _EmitNS()
+
+    def emit_transfer(self, *, value, on="finalized"):
+        if int(value) <= 0:
+            raise ValueError("value must be greater than 0 for emit_transfer")
+        _debit_executing(int(value))
+        _STUB_LEDGER[str(self._address)] = (
+            _STUB_LEDGER.get(str(self._address), 0) + int(value)
+        )
 
 
 _CONTRACT_REGISTRY: dict[str, _ContractProxy] = {}
@@ -201,6 +293,7 @@ def get_contract_at(address):
 
 def reset_contract_registry():
     _CONTRACT_REGISTRY.clear()
+    _STUB_LEDGER.clear()
 
 
 def register_contract_view(address, name, fn):

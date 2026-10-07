@@ -621,6 +621,7 @@ class AgentCourtCore(gl.Contract):
     dispute_evidence_ids: TreeMap[str, str]
     evaluations: TreeMap[str, str]
     verdicts: TreeMap[str, str]
+    escrows: TreeMap[str, str]
 
     def __init__(self, resolution_manager):
         self.owner = gl.message.sender_address
@@ -676,6 +677,54 @@ class AgentCourtCore(gl.Contract):
             if isinstance(appeal, dict) and not appeal.get("resolved"):
                 return True
         return False
+
+    # -------------------------------------------------------------------------
+    # Escrow (staked bonds held in the core contract until settlement)
+    # -------------------------------------------------------------------------
+
+    def _load_escrow(self, dispute_id) -> dict:
+        raw = self.escrows.get(str(dispute_id))
+        if raw is None:
+            return {
+                "disputeId": int(dispute_id),
+                "claimant": {"deposited": False, "amount": 0},
+                "respondent": {"deposited": False, "amount": 0},
+                "released": False,
+                "payouts": [],
+            }
+        return json.loads(raw)
+
+    def _save_escrow(self, dispute_id, escrow: dict):
+        self.escrows[str(dispute_id)] = json.dumps(escrow)
+
+    @gl.public.write.payable
+    def deposit_stake(self, dispute_id):
+        """Party deposits its bond. The stake is held by this contract until
+        settlement releases or slashes it per the final verdict."""
+        self._require_not_paused()
+        dispute = self._load_dispute(dispute_id)
+        sender = str(gl.message.sender_address).lower()
+        claimant = str(dispute["claimant"]).lower()
+        respondent = str(dispute["respondent"]).lower()
+        if sender != claimant and sender != respondent:
+            raise gl.vm.UserError("Only dispute parties can stake")
+        if dispute["status"] not in (
+            STATUS_OPEN,
+            STATUS_EVIDENCE_COLLECTION,
+        ):
+            raise gl.vm.UserError("Staking window closed")
+        amount = int(gl.message.value)
+        if amount <= 0:
+            raise gl.vm.UserError("No stake attached")
+        if amount < int(dispute["stake"]):
+            raise gl.vm.UserError("Insufficient stake")
+        escrow = self._load_escrow(dispute_id)
+        key = "claimant" if sender == claimant else "respondent"
+        if escrow[key]["deposited"]:
+            raise gl.vm.UserError("Party already staked")
+        escrow[key] = {"deposited": True, "amount": amount}
+        self._save_escrow(dispute_id, escrow)
+        return amount
 
     # -------------------------------------------------------------------------
     # Dispute lifecycle (caller supplies claim + evidence only)
@@ -1060,6 +1109,33 @@ class AgentCourtCore(gl.Contract):
         manager = gl.get_contract_at(self.resolution_manager)
         manager.emit(on="finalized").execute_settlement(int(dispute_id))
 
+        # Escrow release: the winner is refunded its own bond and receives the
+        # loser's slashed bond. No partial or double release (released flag).
+        escrow = self._load_escrow(dispute_id)
+        if not escrow.get("released"):
+            verdict_val = int(verdict.get("verdict", VERDICT_NONE))
+            claimant_amt = int(escrow["claimant"]["amount"])
+            respondent_amt = int(escrow["respondent"]["amount"])
+            payouts = []
+            if verdict_val == VERDICT_TRUE:
+                total = claimant_amt + respondent_amt
+                if total > 0:
+                    payouts.append((dispute["claimant"], total))
+            elif verdict_val == VERDICT_FALSE:
+                total = claimant_amt + respondent_amt
+                if total > 0:
+                    payouts.append((dispute["respondent"], total))
+            for recipient, amount in payouts:
+                if amount > 0:
+                    gl.get_contract_at(Address(recipient)).emit_transfer(
+                        value=u256(amount), on="finalized"
+                    )
+            escrow["released"] = True
+            escrow["payouts"] = [
+                {"to": recipient, "amount": amount} for recipient, amount in payouts
+            ]
+            self._save_escrow(dispute_id, escrow)
+
         dispute = self._load_dispute(dispute_id)
         dispute["status"] = STATUS_CLOSED
         self._save_dispute(dispute)
@@ -1165,6 +1241,13 @@ class AgentCourtCore(gl.Contract):
     @gl.public.view
     def has_verdict(self, dispute_id) -> bool:
         return self.verdicts.get(str(dispute_id)) is not None
+
+    @gl.public.view
+    def get_escrow(self, dispute_id) -> dict | None:
+        raw = self.escrows.get(str(dispute_id))
+        if raw is None:
+            return None
+        return json.loads(raw)
 
     @gl.public.view
     def get_verdict(self, dispute_id) -> dict | None:
